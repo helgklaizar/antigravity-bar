@@ -23,7 +23,7 @@ which git node python gh 2>/dev/null
 # Check if ecosystem already exists
 ls ~/.gemini/antigravity/skills 2>/dev/null && echo "HAS_SKILLS" || echo "NO_SKILLS"
 ls ~/.gemini/antigravity/knowledge/user_ecosystem_profile/artifacts/PROFILE.md 2>/dev/null && echo "HAS_PROFILE" || echo "NO_PROFILE"
-ls ~/.gemini/antigravity/agents 2>/dev/null && echo "HAS_AGENTS" || echo "NO_AGENTS"
+
 
 # Scan open project for stack manifest
 ls package.json Cargo.toml requirements.txt pyproject.toml go.mod 2>/dev/null
@@ -66,7 +66,7 @@ mkdir -p "$LEGACY"
 # Use cp -r to preserve, then we'll overwrite the originals in Stage 4
 [ -d ~/.gemini/antigravity/skills ]            && cp -r ~/.gemini/antigravity/skills            "$LEGACY/skills"
 [ -d ~/.gemini/antigravity/global_workflows ]   && cp -r ~/.gemini/antigravity/global_workflows   "$LEGACY/global_workflows"
-[ -d ~/.gemini/antigravity/agents ]             && cp -r ~/.gemini/antigravity/agents             "$LEGACY/agents"
+
 [ -d ~/.gemini/antigravity/knowledge ]          && cp -r ~/.gemini/antigravity/knowledge          "$LEGACY/knowledge"
 [ -f ~/.gemini/antigravity/settings.json ]      && cp    ~/.gemini/antigravity/settings.json      "$LEGACY/settings.json"
 [ -f ~/.gemini/GEMINI.md ]                      && cp    ~/.gemini/GEMINI.md                      "$LEGACY/GEMINI.md"
@@ -87,10 +87,6 @@ After archiving, scan the legacy for important custom data to carry forward:
 ### Extract from `legacy/knowledge/user_ecosystem_profile/artifacts/PROFILE.md`
 - Name, Profession, OS, preferred stacks, active skills list → carry forward to new PROFILE.md
 
-### Extract from `legacy/agents/`
-- List all `.md` files. Read each one.
-- **If it contains project-specific custom rules** (not generic boilerplate): carry it forward to `~/.gemini/antigravity/agents/`
-- **If it's a generic template**: skip — it will be replaced by the fresh repo version.
 
 ### Extract from `legacy/settings.json`
 - Read the existing `settings.json`.
@@ -118,10 +114,6 @@ cp -r ./skills/* ~/.gemini/antigravity/skills/
 cp -r ./global_workflows/* ~/.gemini/antigravity/global_workflows/
 ```
 
-### 3. Agents
-```bash
-cp -r ./agents/* ~/.gemini/antigravity/agents/
-```
 
 ### 4. Templates
 ```bash
@@ -153,8 +145,8 @@ Output a clean markdown summary:
 ✅ Ecosystem Ready
 
 📦 Archived (legacy):  ~/.gemini/antigravity/legacy_backup/[timestamp]/
-🆕 Installed:          skills: [N] | workflows: [N] | agents: [N]
-🔀 Merged from legacy: PROFILE data, [N] custom agents, custom settings keys
+🆕 Installed:          skills: [N] | workflows: [N]
+🔀 Merged from legacy: PROFILE data, custom settings keys
 📋 Profile:            [Name] | [Stack] | [OS]
 
 Next steps:

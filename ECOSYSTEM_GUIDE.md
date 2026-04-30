@@ -1,6 +1,6 @@
 # 📖 ECOSYSTEM GUIDE: Essential Stack & Installation
 
-Welcome to the **AI Ecosystem Guide**. This document defines the curated list of skills, workflows, and agents that are actually useful for our development stack. We keep our environment clean by ONLY downloading what we actively use.
+Welcome to the **AI Ecosystem Guide**. This document defines the curated list of skills and workflows that are actually useful for our development stack. We keep our environment clean by ONLY downloading what we actively use.
 
 ---
 
@@ -33,14 +33,7 @@ These give the AI specialized knowledge for our specific stack:
 - `skills/design-ui/ui-taste-design.md` — Enforces premium, non-generic design principles.
 - `skills/automation-tools/bash-scripting.md` — For safe, defensive shell operations.
 
-### 3. Core Agents (`~/.gemini/antigravity/agents/`)
-Specialized personas:
-- `Architect` — System design and file structure.
-- `Developer` — Clean code execution.
-- `QA Tester` — Automated testing and edge-case discovery.
-- `DevOps` — Deployment and GitHub CI/CD setup.
-
-### 4. Core Templates & Swarm Orchestration (`~/.gemini/antigravity/templates/`)
+### 3. Core Templates & Swarm Orchestration (`~/.gemini/antigravity/templates/`)
 These govern project-level AI operations, context sharing, and multi-agent concurrency:
 - `SWARM_STATE.md` — Mandatory handover document when switching between AI agents (e.g., Backend -> Frontend).
 - `SECRETS_MAP.md` — Explains where to find environment variables locally (No hardcoding!).
@@ -61,7 +54,7 @@ Our ecosystem strictly follows a 3-layer architecture to prevent hallucinations 
 2. **Skills & Workflows (`global_workflows/`)**: *The Orchestrators*. These markdown files are routing steps. They tell the AI: "Run script A, check result, then run script B." They coordinate tools but do not execute logic internally.
 3. **Tools (Local Scripts & Bash)**: *The Executors*. The actual work (fetching URLs, parsing logs, making API calls) is done by small, dedicated `.py` or `.sh` scripts. We use native terminal execution instead of bloated MCP servers (because we already have local filesystem access). Tools are "dumb couriers" that return JSON or text.
 
-**CRITICAL:** Do NOT create `.gemini/agents/` or `.gemini/skills/` folders inside individual project repositories (e.g., `PROD/my-app/.gemini/`). 
+**CRITICAL:** Do NOT create `.gemini/skills/` folders inside individual project repositories (e.g., `PROD/my-app/.gemini/`). 
 All AI assets MUST be stored centrally in `~/.gemini/antigravity/`. This prevents version drift, avoids context fragmentation ("blind spots"), and ensures the IDE's Status Bar tools work seamlessly across all your projects.
 
 ## 🧠 Experience Bank (Reasoning Memory & Knowledge Items)
@@ -73,7 +66,7 @@ All AI assets MUST be stored centrally in `~/.gemini/antigravity/`. This prevent
 2. Какие подходы **провалились** и почему (ошибки, тупики).
 3. Какая цепочка рассуждений привела к **успехy**.
 
-Приступая к новой задаче, агенты (особенно Developer и QA) запрашивают эту базу, чтобы избежать повторения известных ошибок (Memory-Aware Test-Time Scaling).
+Приступая к новой задаче, ИИ запрашивает эту базу, чтобы избежать повторения известных ошибок (Memory-Aware Test-Time Scaling).
 
 ## ⚙️ How to Clean Your System
 

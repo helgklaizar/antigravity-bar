@@ -31,8 +31,8 @@ We solve this by centralizing the "brain" and strictly separating concerns. The 
 This 3-layer architecture ensures zero context bloat, eliminates hallucinations, and allows the AI to use native terminal execution securely instead of relying on heavy MCP servers.
 
 - **Deploy the Best Tools:** Instantly pull the most cutting-edge workflows, prompt updates, and skills specifically tailored for Antigravity.
-- **Agentic Mode Ready:** Fine-tuned to allow your AI agents to execute massive, end-to-end tasks autonomously without getting stuck.
-- **Experience Bank (Reasoning Memory):** Agents don't just remember static rules—they actively log their "failure trajectories" into Knowledge Items, ensuring mistakes are never repeated across your entire ecosystem.
+- **Agentic Mode Ready:** Fine-tuned to allow your AI to execute massive, end-to-end tasks autonomously without getting stuck.
+- **Experience Bank (Reasoning Memory):** The AI doesn't just remember static rules—it actively logs its "failure trajectories" into Knowledge Items, ensuring mistakes are never repeated across your entire ecosystem.
 
 ---
 
@@ -40,13 +40,13 @@ This 3-layer architecture ensures zero context bloat, eliminates hallucinations,
 
 - **Solo Developers & Indie Hackers**: Helps you code 10x faster by providing pre-written, highly optimized workflows. Need to build a native Mac app? Just use the existing macOS skills. No need to teach the AI *how* to code—it already knows the best practices.
 - **Development Teams**: Provides a unified standard. Every developer on your team will have the exact same AI guardrails, ensuring that code quality, security protocols, and testing standards remain perfectly consistent across all commits.
-- **AI Orchestrators (Agents)**: This is fundamentally an API for AI. It gives AI agents the structured blueprints they need to execute massive tasks (like full codebase refactors or E2E UI testing) autonomously, without waiting for human input.
+- **AI Orchestrators**: This is fundamentally an API for AI. It gives the AI the structured blueprints it needs to execute massive tasks (like full codebase refactors or E2E UI testing) autonomously, without waiting for human input.
 
 ---
 
 ## ⚡ AntigravityBar: Your AI Command Center
 
-Forget digging through terminals. The **AntigravityBar** is a native, ultra-lightweight macOS status bar app that bridges this GitHub ecosystem directly to your machine. It's the ultimate remote control for your AI agents.
+Forget digging through terminals. The **AntigravityBar** is a native, ultra-lightweight macOS status bar app that bridges this GitHub ecosystem directly to your machine. It's the ultimate remote control for your AI.
 
 ![Antigravity Bar Menu](status-bar/assets/screenshots/dashboard.png)
 
@@ -63,13 +63,12 @@ Forget digging through terminals. The **AntigravityBar** is a native, ultra-ligh
 
 To ensure zero bloat and maximum performance, the ecosystem is strictly divided by responsibility. 
 
-> 📖 **Explore the Capabilities:** For a full, curated list of all active skills, agents, and macro-workflows, read the **[Ecosystem Guide](ECOSYSTEM_GUIDE.md)**.
+> 📖 **Explore the Capabilities:** For a full, curated list of all active skills and macro-workflows, read the **[Ecosystem Guide](ECOSYSTEM_GUIDE.md)**.
 
 | Directory | Purpose | Examples |
 | :--- | :--- | :--- |
 | 🌍 **`/global_workflows`** | **Macro Operations.** High-level orchestrations triggered via `/slash-commands`. They tell the AI *what* process to run. | `/qa-orchestrator`, `/pr-writer`, `/session-recap` |
 | 🧠 **`/skills`** | **Micro Instructions.** Stack-specific rules that teach the AI *how* to write code for your specific language. | `React`, `Swift`, `Python`, `Rust` best practices |
-| 🎭 **`/agents`** | **AI Personas.** Distinct AI identities that can be swapped dynamically to handle specialized tasks. | `Architect`, `Developer`, `QA Tester` |
 | 📋 **`/templates`** | **System Files.** Standardized blueprints used to format project execution and share context. | `GEMINI.md`, `SWARM_STATE.md`, `SECRETS_MAP.md` |
 | ⚡ **`/status-bar`** | **Source Code.** The Swift source code for the native macOS AntigravityBar application. | App UI, System Telemetry logic |
 
