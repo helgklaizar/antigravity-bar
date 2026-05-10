@@ -19,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let api = AntigravityAPI.shared
     private var isMenuOpen = false
     private var isFetching = false
+    private var installerWindowController: NSWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -257,6 +258,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         let cacheSize = api.cacheSize().formatted
         let allActions: [(String, String, NSColor)] = [
+            ("AI\nInstaller", "wand.and.stars", .systemPurple),
             ("Open\n.gemini", "folder", .systemBlue),
             ("Restart &\nReload", "arrow.clockwise", .systemYellow),
             ("Clean Cache\n\(cacheSize)", "trash", .systemRed),
@@ -786,10 +788,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggleStack.addArrangedSubview(toggle)
         
         let syncBtn = NSButton()
-        syncBtn.title = "Analyze Chats & Fetch"
+        syncBtn.title = "Analyze System & Install"
         syncBtn.bezelStyle = .rounded
         syncBtn.target = self
-        syncBtn.action = #selector(analyzeChatsAndSync)
+        syncBtn.action = #selector(showInstallerWindow)
         
         controls.addView(toggleStack, in: .leading)
         controls.addView(syncBtn, in: .trailing)
@@ -838,9 +840,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         UserDefaults.standard.set(sender.state == .on, forKey: "DynamicSkillsEnabled")
     }
     
-    @objc private func analyzeChatsAndSync() {
-        TerminalHelper.analyzeChatsAndSyncSkills()
+    @objc private func showInstallerWindow() {
         statusItem.menu?.cancelTracking()
+        
+        if installerWindowController == nil {
+            let hostingController = NSHostingController(rootView: InstallerView())
+            let window = NSWindow(contentViewController: hostingController)
+            window.title = "AI Ecosystem Installer"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.center()
+            window.setFrameAutosaveName("AIInstallerWindow")
+            installerWindowController = NSWindowController(window: window)
+        }
+        
+        installerWindowController?.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
     
     @objc private func cleanUpWorkflows() {
@@ -864,10 +878,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             switch segment {
-            case 0: self.openGeminiFolder()
-            case 1: self.restartAndReload()
-            case 2: self.fullCleanup()
-            case 3: self.quitApp()
+            case 0: self.showInstallerWindow()
+            case 1: self.openGeminiFolder()
+            case 2: self.restartAndReload()
+            case 3: self.fullCleanup()
+            case 4: self.quitApp()
             default: break
             }
         }
