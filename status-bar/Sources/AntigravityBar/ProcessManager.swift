@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 struct ProcessItem: Identifiable {
     let id = UUID()
@@ -24,94 +25,83 @@ struct AppGroup: Identifiable {
 
 class ProcessManager {
     static func getTopProcesses() -> [AppGroup] {
-        let task = Process()
-        task.launchPath = "/bin/ps"
-        task.arguments = ["-axm", "-o", "pid,rss,comm"]
+        let maxPids = 4096
+        var pids = [pid_t](repeating: 0, count: maxPids)
+        let returnedBytes = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(maxPids * MemoryLayout<pid_t>.stride))
+        let numPids = Int(returnedBytes) / MemoryLayout<pid_t>.stride
         
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = FileHandle.nullDevice
+        var allProcesses: [ProcessItem] = []
         
-        do {
-            try task.run()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let output = String(data: data, encoding: .utf8) else { return [] }
+        for i in 0..<numPids {
+            let pid = pids[i]
+            if pid <= 0 { continue }
             
-            var allProcesses: [ProcessItem] = []
+            var pathBuffer = [CChar](repeating: 0, count: Int(4096))
+            let pathLen = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
+            guard pathLen > 0 else { continue }
             
-            let lines = output.components(separatedBy: .newlines).dropFirst() // skip header
-            for line in lines {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if trimmed.isEmpty { continue }
+            let realPath = pathBuffer.withUnsafeBufferPointer { ptr in
+                String(cString: ptr.baseAddress!)
+            }
+            let name = (realPath as NSString).lastPathComponent
+            
+            var info = proc_taskinfo()
+            let infoSize = Int32(MemoryLayout<proc_taskinfo>.size)
+            let result = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info, infoSize)
+            if result == infoSize {
+                let rss = Int(info.pti_resident_size / 1024)
+                if rss <= 0 { continue }
                 
-                let components = trimmed.split(separator: " ", maxSplits: 2)
-                if components.count == 3,
-                   let pid = Int(components[0]),
-                   let rss = Int(components[1]) {
-                    let comm = String(components[2])
-                    let name = (comm as NSString).lastPathComponent
-                    
-                    var realPath = comm
-                    var pathBuffer = [CChar](repeating: 0, count: Int(4096))
-                    let pathLen = proc_pidpath(Int32(pid), &pathBuffer, UInt32(pathBuffer.count))
-                    if pathLen > 0 {
-                        realPath = String(cString: pathBuffer)
-                    }
-                    
-                    var isSystem = (realPath.hasPrefix("/System/") || 
-                                    realPath.hasPrefix("/usr/") || 
-                                    realPath.hasPrefix("/sbin/") || 
-                                    realPath.hasPrefix("/bin/") ||
-                                    realPath.hasPrefix("/Library/Apple/")) 
-                                   && !realPath.hasPrefix("/usr/local/")
-                    
-                    if realPath.contains("Safari.app") || realPath.contains("com.apple.WebKit") || realPath.contains("Safari") {
-                        isSystem = false
-                    }
-                    
-                    var appName = name
-                    var appPath = realPath
-                    if isSystem {
-                        appName = "macOS System"
-                    } else if realPath.contains("com.apple.WebKit") || name.contains("Safari") {
-                        appName = "Safari"
-                        appPath = "/Applications/Safari.app"
-                    } else if let appRange = realPath.range(of: ".app/") {
-                        let prefix = realPath[..<appRange.lowerBound]
-                        appName = (prefix as NSString).lastPathComponent + ".app"
-                        appPath = String(prefix) + ".app"
-                    } else if comm.contains("Helper") {
-                        if let firstWord = appName.split(separator: " ").first {
-                            appName = String(firstWord)
-                        }
-                    }
-                    
-                    allProcesses.append(ProcessItem(pid: pid, rssKB: rss, name: name, appName: appName, appPath: appPath, isSystem: isSystem))
+                var isSystem = (realPath.hasPrefix("/System/") || 
+                                realPath.hasPrefix("/usr/") || 
+                                realPath.hasPrefix("/sbin/") || 
+                                realPath.hasPrefix("/bin/") ||
+                                realPath.hasPrefix("/Library/Apple/")) 
+                               && !realPath.hasPrefix("/usr/local/")
+                
+                if realPath.contains("Safari.app") || realPath.contains("com.apple.WebKit") || realPath.contains("Safari") {
+                    isSystem = false
                 }
-            }
-            
-            var grouped: [String: [ProcessItem]] = [:]
-            for p in allProcesses {
-                var groupName = p.appName
-                if groupName.hasSuffix(".app") {
-                    groupName = String(groupName.dropLast(4))
+                
+                var appName = name
+                var appPath = realPath
+                if isSystem {
+                    appName = "macOS System"
+                } else if realPath.contains("com.apple.WebKit") || name.contains("Safari") {
+                    appName = "Safari"
+                    appPath = "/Applications/Safari.app"
+                } else if let appRange = realPath.range(of: ".app/") {
+                    let prefix = realPath[..<appRange.lowerBound]
+                    appName = (prefix as NSString).lastPathComponent + ".app"
+                    appPath = String(prefix) + ".app"
+                } else if name.contains("Helper") {
+                    if let firstWord = appName.split(separator: " ").first {
+                        appName = String(firstWord)
+                    }
                 }
-                grouped[groupName, default: []].append(p)
+                
+                allProcesses.append(ProcessItem(pid: Int(pid), rssKB: rss, name: name, appName: appName, appPath: appPath, isSystem: isSystem))
             }
-            
-            var groups: [AppGroup] = grouped.map { (key, value) in
-                let total = value.reduce(0) { $0 + $1.rssKB }
-                let sortedProcesses = value.sorted { $0.rssKB > $1.rssKB }
-                let path = sortedProcesses.first?.appPath ?? ""
-                return AppGroup(id: key, appName: key, appPath: path, totalRssKB: total, processes: sortedProcesses)
-            }
-            
-            groups.sort { $0.totalRssKB > $1.totalRssKB }
-            return Array(groups.prefix(20))
-            
-        } catch {
-            return []
         }
+        
+        var grouped: [String: [ProcessItem]] = [:]
+        for p in allProcesses {
+            var groupName = p.appName
+            if groupName.hasSuffix(".app") {
+                groupName = String(groupName.dropLast(4))
+            }
+            grouped[groupName, default: []].append(p)
+        }
+        
+        var groups: [AppGroup] = grouped.map { (key, value) in
+            let total = value.reduce(0) { $0 + $1.rssKB }
+            let sortedProcesses = value.sorted { $0.rssKB > $1.rssKB }
+            let path = sortedProcesses.first?.appPath ?? ""
+            return AppGroup(id: key, appName: key, appPath: path, totalRssKB: total, processes: sortedProcesses)
+        }
+        
+        groups.sort { $0.totalRssKB > $1.totalRssKB }
+        return Array(groups.prefix(20))
     }
     
     static func formatMemory(_ kb: Int) -> String {

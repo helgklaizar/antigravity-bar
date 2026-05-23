@@ -3,7 +3,28 @@ import AppKit
 
 @MainActor
 struct TerminalHelper {
-    static let antigravityCLI = "/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity"
+    static var antigravityCLI: String {
+        let isVersion2 = AntigravityAPI.shared.baseDir.lastPathComponent == "antigravity-ide"
+        let ideCLI = "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide"
+        let classicCLI = "/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity"
+        
+        if isVersion2 {
+            if FileManager.default.fileExists(atPath: ideCLI) {
+                return ideCLI
+            }
+            if FileManager.default.fileExists(atPath: classicCLI) {
+                return classicCLI
+            }
+        } else {
+            if FileManager.default.fileExists(atPath: classicCLI) {
+                return classicCLI
+            }
+            if FileManager.default.fileExists(atPath: ideCLI) {
+                return ideCLI
+            }
+        }
+        return classicCLI
+    }
     
     static func runAppleScript(_ script: String) {
         let appleScript = """
@@ -59,7 +80,10 @@ struct TerminalHelper {
                 task.standardError = FileHandle.nullDevice
                 try? task.run()
             } else {
-                if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.antigravity") {
+                let bundleID = AntigravityAPI.shared.baseDir.lastPathComponent == "antigravity-ide" ? "com.google.antigravity-ide" : "com.google.antigravity"
+                if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                    NSWorkspace.shared.openApplication(at: url, configuration: .init())
+                } else if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.antigravity") {
                     NSWorkspace.shared.openApplication(at: url, configuration: .init())
                 }
             }
@@ -82,7 +106,8 @@ struct TerminalHelper {
     }
     
     static func autoConfigureEcosystem() {
-        let prompt = "Please analyze my project folders in ~/Documents/PROJECTS. Based on the languages and frameworks you find, determine my Tech Stack. Before pulling new files, move existing skills and workflows in ~/.gemini/antigravity/ to ~/.gemini/antigravity/legacy_backup/$(date +%Y%m%d_%H%M%S)/. Then read ~/Documents/PROJECTS/WORK/AI-Ecosystem/ECOSYSTEM_GUIDE.md, copy the necessary skills into ~/.gemini/antigravity/, generate my ~/.gemini/antigravity/knowledge/user_ecosystem_profile/artifacts/PROFILE.md, and create a base environment config at ~/.gemini/GEMINI.md."
+        let baseDir = AntigravityAPI.shared.baseDir.path
+        let prompt = "Please analyze my project folders in ~/Documents/PROJECTS. Based on the languages and frameworks you find, determine my Tech Stack. Before pulling new files, move existing skills and workflows in \(baseDir)/ to \(baseDir)/legacy_backup/$(date +%Y%m%d_%H%M%S)/. Then read ~/Documents/PROJECTS/WORK/AI-Ecosystem/ECOSYSTEM_GUIDE.md, copy the necessary skills into \(baseDir)/, generate my \(baseDir)/knowledge/user_ecosystem_profile/artifacts/PROFILE.md, and create a base environment config at ~/.gemini/GEMINI.md."
         let script = "'\(antigravityCLI)' chat \\\"\(prompt)\\\""
         runAppleScript(script)
     }
@@ -93,7 +118,8 @@ struct TerminalHelper {
     }
 
     static func analyzeChatsAndSyncSkills() {
-        let prompt = "Please analyze recent conversations in ~/.gemini/antigravity/brain. Identify recurring topics and check if we have all necessary skills/workflows downloaded locally. If any are missing, fetch them from the registry."
+        let baseDir = AntigravityAPI.shared.baseDir.path
+        let prompt = "Please analyze recent conversations in \(baseDir)/brain. Identify recurring topics and check if we have all necessary skills/workflows downloaded locally. If any are missing, fetch them from the registry."
         let script = "'\(antigravityCLI)' chat \\\"\(prompt)\\\""
         runAppleScript(script)
     }

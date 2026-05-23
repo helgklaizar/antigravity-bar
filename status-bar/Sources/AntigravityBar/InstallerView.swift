@@ -29,11 +29,11 @@ class InstallerViewModel: ObservableObject {
     @Published var nodes: [Node] = []
     @Published var isShowingSettings: Bool = false
     @Published var registrySections: [RegistrySection] = []
+    @Published var systemReport: SystemReport? = nil
     
-    private let registryURL: URL = {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".gemini/antigravity/registry.json")
-    }()
+    private var registryURL: URL {
+        return AntigravityAPI.shared.baseDir.appendingPathComponent("registry.json")
+    }
     
     init() {
         loadSources()
@@ -41,20 +41,64 @@ class InstallerViewModel: ObservableObject {
     
     func analyzeSystem() {
         step = .analyzing
-        // Симулируем процесс
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            self.nodes = [
-                Node(name: "skills", isFolder: true, children: [
-                    Node(name: "frontend", isFolder: true, children: [Node(name: "react.md", isSelected: true, isFolder: false), Node(name: "tailwind.md", isSelected: true, isFolder: false)]),
-                    Node(name: "database", isFolder: true, children: [Node(name: "prisma.md", isSelected: true, isFolder: false)]),
-                    Node(name: "native", isFolder: true, children: [Node(name: "apple-mlx.md", isSelected: false, isFolder: false)])
-                ]),
-                Node(name: "global_workflows", isFolder: true, children: [
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            let report = SystemAnalyzer.analyze()
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                self.systemReport = report
+                
+                var rootNodes: [Node] = []
+                
+                // 1. Core Ecosystem (always offer)
+                rootNodes.append(Node(name: "core_antigravity", isFolder: true, children: [
+                    Node(name: "antigravity-awesome-skills", isSelected: !report.hasAntigravity, isFolder: false),
+                    Node(name: "claude-code-system-prompts", isSelected: true, isFolder: false)
+                ]))
+                
+                // 2. Conditional Projects
+                var skillsChildren: [Node] = []
+                
+                if report.foundProjects.contains("Node/React") {
+                    skillsChildren.append(Node(name: "frontend", isFolder: true, children: [
+                        Node(name: "react", isFolder: true, children: [
+                            Node(name: "react-expert.md", isSelected: true, isFolder: false),
+                            Node(name: "hooks-patterns.md", isSelected: true, isFolder: false)
+                        ]),
+                        Node(name: "tailwind", isFolder: true, children: [
+                            Node(name: "tailwind-best-practices.md", isSelected: true, isFolder: false)
+                        ])
+                    ]))
+                }
+                
+                if report.foundProjects.contains("Rust/Tauri") {
+                    skillsChildren.append(Node(name: "backend", isFolder: true, children: [
+                        Node(name: "rust", isFolder: true, children: [
+                            Node(name: "rust-memory-safety.md", isSelected: true, isFolder: false)
+                        ])
+                    ]))
+                }
+                
+                // 3. Apple MLX
+                skillsChildren.append(Node(name: "native", isFolder: true, children: [
+                    Node(name: "apple", isFolder: true, children: [
+                        Node(name: "apple-mlx.md", isSelected: false, isFolder: false)
+                    ])
+                ]))
+                
+                if !skillsChildren.isEmpty {
+                    rootNodes.append(Node(name: "skills", isFolder: true, children: skillsChildren))
+                }
+                
+                // 4. Global Workflows
+                rootNodes.append(Node(name: "global_workflows", isFolder: true, children: [
                     Node(name: "feature-pipeline.md", isSelected: true, isFolder: false),
                     Node(name: "qa-orchestrator.md", isSelected: true, isFolder: false)
-                ])
-            ]
-            self.step = .results
+                ]))
+                
+                self.nodes = rootNodes
+                self.step = .results
+            }
         }
     }
     
@@ -174,16 +218,33 @@ struct InstallerView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         // Analysis Report
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Analysis Complete")
-                                .font(.headline)
-                                .foregroundColor(.green)
-                            Text("Missing: React and Tailwind skills are not configured globally.")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
+                            if let report = viewModel.systemReport {
+                                if report.warnings.isEmpty {
+                                    Text("System is healthy.")
+                                        .font(.headline)
+                                        .foregroundColor(.green)
+                                } else {
+                                    Text("System Alerts:")
+                                        .font(.headline)
+                                        .foregroundColor(.orange)
+                                    ForEach(report.warnings, id: \.self) { warning in
+                                        Text("• \(warning)")
+                                            .font(.subheadline)
+                                            .foregroundColor(.primary)
+                                    }
+                                }
+                                
+                                if !report.foundProjects.isEmpty {
+                                    Text("Detected Stack: \(report.foundProjects.joined(separator: ", "))")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .padding(.top, 4)
+                                }
+                            }
                         }
                         .padding()
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.green.opacity(0.1))
+                        .background(Color.secondary.opacity(0.1))
                         
                         List {
                             ForEach($viewModel.nodes) { $node in
@@ -200,7 +261,7 @@ struct InstallerView: View {
                             .scaleEffect(1.5)
                         Text("Installing Skills...")
                             .font(.headline)
-                        Text("Injecting selected configurations into ~/.gemini/antigravity/")
+                        Text("Injecting selected configurations into \(AntigravityAPI.shared.baseDir.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))/")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }

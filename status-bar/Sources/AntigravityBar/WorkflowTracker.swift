@@ -10,16 +10,12 @@ public struct WorkflowStats {
 public final class WorkflowTracker {
     public static let shared = WorkflowTracker()
     
-    private let antigravityDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gemini/antigravity")
-    private let workflowsDir: URL
-    private let archiveDir: URL
-    private let brainDir: URL
+    private var antigravityDir: URL { AntigravityAPI.shared.baseDir }
+    private var workflowsDir: URL { antigravityDir.appendingPathComponent("global_workflows") }
+    private var archiveDir: URL { antigravityDir.appendingPathComponent("workflows_archive") }
+    private var brainDir: URL { antigravityDir.appendingPathComponent("brain") }
     
-    private init() {
-        workflowsDir = antigravityDir.appendingPathComponent("global_workflows")
-        archiveDir = antigravityDir.appendingPathComponent("workflows_archive")
-        brainDir = antigravityDir.appendingPathComponent("brain")
-    }
+    private init() {}
     
     public func fetchUsageStats() -> [WorkflowStats] {
         guard let workflowFiles = findMarkdownFiles(in: workflowsDir) else { return [] }

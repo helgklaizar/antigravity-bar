@@ -2,12 +2,19 @@ import AppKit
 import Foundation
 import ServiceManagement
 import SwiftUI
-
+import UserNotifications
 
 struct EnvPaths {
     static let geminiDir = NSHomeDirectory() + "/.gemini"
     static let antigravityDir = NSHomeDirectory() + "/.gemini/antigravity"
     static let ecosystemDir = NSHomeDirectory() + "/Documents/PROJECTS/WORK/AI-Ecosystem"
+}
+
+class DaemonActionButton: NSButton {
+    var email: String = ""
+    var port: Int = 0
+    var pid: Int = 0
+    var actionType: String = "" // "select", "stop", "webui"
 }
 
 @MainActor
@@ -20,6 +27,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var isMenuOpen = false
     private var isFetching = false
     private var installerWindowController: NSWindowController?
+    
+    // Multi-account and daemon tracking
+    private var activeQuotas: [String: QuotaData] = [:] // Key: Email
+    private var discoveredDaemons: [String: DaemonInfo] = [:] // Key: Email
+    private var selectedEmail: String? {
+        get { UserDefaults.standard.string(forKey: "SelectedEmail") }
+        set { UserDefaults.standard.set(newValue, forKey: "SelectedEmail") }
+    }
+    private var lastExhaustedModels: Set<String> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -30,6 +46,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+
+        // Request authorization for local notifications
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
         startPolling()
     }
@@ -71,36 +90,123 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         scheduleNextPoll()
     }
 
+    private func fetchQuotaAsync(daemon: DaemonInfo) async -> QuotaData? {
+        await withCheckedContinuation { continuation in
+            api.fetchQuota(daemon: daemon) { quota in
+                continuation.resume(returning: quota)
+            }
+        }
+    }
+
     private func fetchAndUpdate() {
         guard !isFetching else { return }
         isFetching = true
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            
+        
+        Task {
             let cpu = SystemStats.shared.getCPUUsage()
             let gpu = SystemStats.shared.getGPUUsage()
             let ram = SystemStats.shared.getRAMUsage()
-
-            guard let daemon = self.api.findActiveDaemon() else {
-                DispatchQueue.main.async {
-                    self.daemonOnline = false
-                    self.lastQuota = nil
-                    self.updateBarTitle(models: [], cpu: cpu, gpu: gpu, ram: ram)
-                    self.isFetching = false
-                    self.scheduleNextPoll()
-                }
+            
+            let daemons = api.findActiveDaemons()
+            
+            guard !daemons.isEmpty else {
+                self.daemonOnline = false
+                self.activeQuotas = [:]
+                self.discoveredDaemons = [:]
+                self.lastQuota = nil
+                
+                let home = NSHomeDirectory()
+                let ideDir = URL(fileURLWithPath: home).appendingPathComponent(".gemini/antigravity-ide")
+                let baseDirName = FileManager.default.fileExists(atPath: ideDir.path) ? "antigravity-ide" : "antigravity"
+                self.api.baseDir = URL(fileURLWithPath: home).appendingPathComponent(".gemini/\(baseDirName)")
+                
+                self.updateBarTitle(models: [], cpu: cpu, gpu: gpu, ram: ram)
+                self.isFetching = false
+                self.scheduleNextPoll()
                 return
             }
-            self.api.fetchQuota(daemon: daemon) { quota in
-                DispatchQueue.main.async {
-                    self.daemonOnline = true
-                    self.lastQuota = quota
-                    self.updateBarTitle(models: quota?.models ?? [], cpu: cpu, gpu: gpu, ram: ram)
-                    self.isFetching = false
-                    self.scheduleNextPoll()
+            
+            var newQuotas: [String: QuotaData] = [:]
+            var newDaemons: [String: DaemonInfo] = [:]
+            
+            await withTaskGroup(of: (String, QuotaData, DaemonInfo)?.self) { group in
+                for daemon in daemons {
+                    group.addTask {
+                        if let quota = await self.fetchQuotaAsync(daemon: daemon) {
+                            let emailKey = quota.email ?? "Local Daemon (\(daemon.httpPort))"
+                            return (emailKey, quota, daemon)
+                        }
+                        return nil
+                    }
+                }
+                
+                for await result in group {
+                    if let (emailKey, quota, daemon) = result {
+                        newQuotas[emailKey] = quota
+                        newDaemons[emailKey] = daemon
+                    }
                 }
             }
+            
+            self.activeQuotas = newQuotas
+            self.discoveredDaemons = newDaemons
+            
+            let targetEmail = self.selectedEmail
+            var activeQ: QuotaData? = nil
+            
+            if let target = targetEmail, let q = newQuotas[target] {
+                activeQ = q
+            } else if let firstKey = newQuotas.keys.sorted().first {
+                activeQ = newQuotas[firstKey]
+                self.selectedEmail = firstKey
+            }
+            
+            self.lastQuota = activeQ
+            self.daemonOnline = activeQ != nil
+            
+            if let email = self.selectedEmail, let daemon = newDaemons[email] {
+                let isVersion2 = daemon.path.contains("Antigravity IDE") || daemon.path.contains("language_server_macos")
+                let baseDirName = isVersion2 ? "antigravity-ide" : "antigravity"
+                self.api.baseDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".gemini/\(baseDirName)")
+            } else {
+                let home = NSHomeDirectory()
+                let ideDir = URL(fileURLWithPath: home).appendingPathComponent(".gemini/antigravity-ide")
+                let baseDirName = FileManager.default.fileExists(atPath: ideDir.path) ? "antigravity-ide" : "antigravity"
+                self.api.baseDir = URL(fileURLWithPath: home).appendingPathComponent(".gemini/\(baseDirName)")
+            }
+            
+            for (email, qData) in newQuotas {
+                self.checkAndNotifyExhaustion(newModels: qData.models, email: email)
+            }
+            
+            self.updateBarTitle(models: activeQ?.models ?? [], cpu: cpu, gpu: gpu, ram: ram)
+            self.isFetching = false
+            self.scheduleNextPoll()
         }
+    }
+
+    private func checkAndNotifyExhaustion(newModels: [ModelQuota], email: String) {
+        for model in newModels {
+            let key = "\(email)-\(model.label)"
+            if model.isExhausted {
+                if !lastExhaustedModels.contains(key) {
+                    lastExhaustedModels.insert(key)
+                    sendExhaustionNotification(modelLabel: model.label, email: email, resetTime: model.timeUntilReset)
+                }
+            } else {
+                lastExhaustedModels.remove(key)
+            }
+        }
+    }
+    
+    private func sendExhaustionNotification(modelLabel: String, email: String, resetTime: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "⚠️ Quota Exhausted"
+        content.body = "\(modelLabel) quota for \(email) is exhausted. Resets in \(resetTime)."
+        content.sound = .default
+        
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
     }
 
     private func updateBarTitle(models: [ModelQuota], cpu: Int, gpu: Int, ram: Int) {
@@ -179,23 +285,54 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.delegate = self
-
-        // Header with quota details
-        if let quota = lastQuota {
-            let finalModels = prepareModelsForMenu(quota: quota)
-            menu.addItem(makeModelsHorizontalItem(models: finalModels))
+        
+        // 1. Header section "ACTIVE ACCOUNTS & DAEMONS"
+        let headerItem = NSMenuItem()
+        headerItem.view = makeSectionHeader(iconName: "person.3.fill", title: "ACTIVE ACCOUNTS & DAEMONS")
+        headerItem.isEnabled = false
+        menu.addItem(headerItem)
+        
+        // 2. Beautiful cards for each discovered account
+        if discoveredDaemons.isEmpty {
+            let emptyItem = NSMenuItem(title: "⏳ No active accounts or daemons", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            menu.addItem(emptyItem)
         } else {
-            let item = NSMenuItem(title: "⏳ No quota data", action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
+            let sortedEmails = discoveredDaemons.keys.sorted()
+            for email in sortedEmails {
+                if let daemon = discoveredDaemons[email],
+                   let quota = activeQuotas[email] {
+                    let isActive = (email == selectedEmail)
+                    let cardItem = makeAccountCardItem(
+                        email: email,
+                        name: quota.name,
+                        daemon: daemon,
+                        quota: quota,
+                        isActive: isActive
+                    )
+                    menu.addItem(cardItem)
+                }
+            }
         }
-
+        
         menu.addItem(.separator())
         
-        // BLOCK: Top RAM Apps (Informational Strip)
-        menu.addItem(makeAppsHorizontalItem())
-
+        // 4. Workflows Radar widget (Restored)
+        menu.addItem(makeWorkflowsRadarItem())
+        
         menu.addItem(.separator())
+        
+        // 6. Dynamic Skills Hub (Restored)
+        menu.addItem(makeDynamicSkillsItem())
+        
+        menu.addItem(.separator())
+        
+        // 8. Top RAM Processes
+        menu.addItem(makeAppsHorizontalItem())
+        
+        menu.addItem(.separator())
+        
+        // 10. Enhanced Quick Actions toolbar (2x4)
         menu.addItem(makeHorizontalToolbarItem())
         
         statusItem.menu = menu
@@ -260,9 +397,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let allActions: [(String, String, NSColor)] = [
             ("AI\nInstaller", "wand.and.stars", .systemPurple),
             ("Open\n.gemini", "folder", .systemBlue),
+            ("New\nChat", "bubble.left.and.bubble.right", .systemGreen),
+            ("Chat\nAgent", "person.and.sparkles", .systemTeal),
+            ("Sync\nEcosystem", "arrow.triangle.2.circlepath", .systemOrange),
             ("Restart &\nReload", "arrow.clockwise", .systemYellow),
             ("Clean Cache\n\(cacheSize)", "trash", .systemRed),
-            ("Quit\nAntigravity", "xmark.circle", .systemGray)
+            ("Quit\nApp", "xmark.circle", .systemGray)
         ]
         
         let wrapperStack = NSStackView()
@@ -356,18 +496,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return rowStack
         }
         
-        let rowStack = createRow(actions: allActions, startIndex: 0)
+        let row1 = createRow(actions: Array(allActions[0..<4]), startIndex: 0)
+        let row2 = createRow(actions: Array(allActions[4..<8]), startIndex: 4)
         
-        mainStack.addArrangedSubview(rowStack)
+        mainStack.addArrangedSubview(row1)
+        mainStack.addArrangedSubview(row2)
         
-        rowStack.translatesAutoresizingMaskIntoConstraints = false
+        row1.translatesAutoresizingMaskIntoConstraints = false
+        row2.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            rowStack.widthAnchor.constraint(equalToConstant: 526)
+            row1.widthAnchor.constraint(equalToConstant: 526),
+            row2.widthAnchor.constraint(equalToConstant: 526)
         ])
         
         wrapperStack.addArrangedSubview(mainStack)
         
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 550, height: 105))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 550, height: 185))
         wrapperStack.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(wrapperStack)
         
@@ -880,24 +1024,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             switch segment {
             case 0: self.showInstallerWindow()
             case 1: self.openGeminiFolder()
-            case 2: self.restartAndReload()
-            case 3: self.fullCleanup()
-            case 4: self.quitApp()
+            case 2: self.launchNewChat()
+            case 3: self.launchChatAgent()
+            case 4: self.syncEcosystem()
+            case 5: self.restartAndReload()
+            case 6: self.fullCleanup()
+            case 7: self.quitApp()
             default: break
             }
         }
     }
 
-    private func makeModelsHorizontalItem(models: [ModelQuota]) -> NSMenuItem {
-        let item = NSMenuItem()
-        
-        let outerStack = NSStackView()
-        outerStack.orientation = .vertical
-        outerStack.alignment = .centerX
-        outerStack.spacing = 10
-        
-        outerStack.addArrangedSubview(makeSectionHeader(iconName: "cpu", title: "AI MODELS QUOTA"))
-        
+    private func launchNewChat() {
+        TerminalHelper.openNewChat()
+    }
+    
+    private func launchChatAgent() {
+        TerminalHelper.openNewChatAgent()
+    }
+    
+    private func syncEcosystem() {
+        TerminalHelper.syncEcosystem(ecosystemDir: EnvPaths.ecosystemDir)
+    }
+
+    private func makeModelsHorizontalStack(models: [ModelQuota], width: CGFloat) -> NSStackView {
         let stackView = NSStackView()
         stackView.orientation = .horizontal
         stackView.distribution = .fillEqually
@@ -941,22 +1091,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             else if vendor == "GPT-OSS" { vendorColor = .systemGreen }
             
             let vendorField = createLabel(NSAttributedString(string: vendor.uppercased(), attributes: [
-                .font: NSFont.systemFont(ofSize: 9, weight: .bold),
+                .font: NSFont.systemFont(ofSize: 8, weight: .bold),
                 .foregroundColor: vendorColor.withAlphaComponent(0.9)
             ]))
             
             let tierField = createLabel(NSAttributedString(string: tier, attributes: [
-                .font: NSFont.systemFont(ofSize: 12, weight: .heavy),
+                .font: NSFont.systemFont(ofSize: 11, weight: .heavy),
                 .foregroundColor: NSColor.labelColor
             ]))
             
             let pctField = createLabel(NSAttributedString(string: "\(icon) \(pct)%", attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
                 .foregroundColor: NSColor.labelColor
             ]))
             
             let timeField = createLabel(NSAttributedString(string: model.timeUntilReset, attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium),
                 .foregroundColor: NSColor.tertiaryLabelColor
             ]))
             
@@ -970,27 +1120,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             vStack.addArrangedSubview(pctField)
             vStack.addArrangedSubview(timeField)
             
-            vStack.setCustomSpacing(4, after: tierField)
-            vStack.setCustomSpacing(2, after: pctField)
+            vStack.setCustomSpacing(3, after: tierField)
+            vStack.setCustomSpacing(1, after: pctField)
             
             let box = NSBox()
             box.boxType = .custom
             box.borderWidth = 0
-            box.cornerRadius = 12
-            box.fillColor = NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.15)
+            box.cornerRadius = 10
+            box.fillColor = NSColor.labelColor.withAlphaComponent(0.04)
             box.contentView = vStack
             
             vStack.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 vStack.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 4),
                 vStack.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -4),
-                vStack.topAnchor.constraint(equalTo: box.topAnchor, constant: 10),
-                vStack.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -10)
+                vStack.topAnchor.constraint(equalTo: box.topAnchor, constant: 6),
+                vStack.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: 6)
             ])
             
             stackView.addArrangedSubview(box)
         }
         
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        stackView.widthAnchor.constraint(equalToConstant: width).isActive = true
+        return stackView
+    }
+
+    private func makeModelsHorizontalItem(models: [ModelQuota]) -> NSMenuItem {
+        let item = NSMenuItem()
+        
+        let outerStack = NSStackView()
+        outerStack.orientation = .vertical
+        outerStack.alignment = .centerX
+        outerStack.spacing = 10
+        
+        outerStack.addArrangedSubview(makeSectionHeader(iconName: "cpu", title: "AI MODELS QUOTA"))
+        
+        let stackView = makeModelsHorizontalStack(models: models, width: 526)
         outerStack.addArrangedSubview(stackView)
         
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 550, height: 125))
@@ -1001,13 +1167,234 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             outerStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
             outerStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
             outerStack.topAnchor.constraint(equalTo: container.topAnchor, constant: 6),
-            outerStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6),
-            
-            stackView.widthAnchor.constraint(equalToConstant: 526)
+            outerStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6)
         ])
         
         item.view = container
         return item
+    }
+
+    private func makeAccountCardItem(email: String, name: String?, daemon: DaemonInfo, quota: QuotaData, isActive: Bool) -> NSMenuItem {
+        let item = NSMenuItem()
+        
+        let containerBox = NSBox()
+        containerBox.boxType = .custom
+        containerBox.borderWidth = isActive ? 1.5 : 1
+        containerBox.borderColor = isActive ? NSColor.systemBlue.withAlphaComponent(0.8) : NSColor.separatorColor.withAlphaComponent(0.2)
+        containerBox.cornerRadius = 14
+        containerBox.fillColor = isActive ? NSColor.systemBlue.withAlphaComponent(0.06) : NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.15)
+        
+        let contentStack = NSStackView()
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 8
+        
+        let topRow = NSStackView()
+        topRow.orientation = .horizontal
+        topRow.alignment = .centerY
+        topRow.distribution = .gravityAreas
+        
+        let infoStack = NSStackView()
+        infoStack.orientation = .vertical
+        infoStack.alignment = .leading
+        infoStack.spacing = 1
+        
+        let nameString = name ?? "Local Developer"
+        let nameLabel = createLabel(NSAttributedString(string: nameString, attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .bold),
+            .foregroundColor: NSColor.labelColor
+        ]))
+        
+        let emailLabel = createLabel(NSAttributedString(string: email, attributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor
+        ]))
+        
+        infoStack.addArrangedSubview(nameLabel)
+        infoStack.addArrangedSubview(emailLabel)
+        
+        let pillBox = NSBox()
+        pillBox.boxType = .custom
+        pillBox.borderWidth = 0
+        pillBox.cornerRadius = 6
+        pillBox.fillColor = isActive ? NSColor.systemGreen.withAlphaComponent(0.15) : NSColor.tertiaryLabelColor.withAlphaComponent(0.15)
+        
+        let pillText = isActive ? "ACTIVE" : "STANDBY"
+        let pillColor = isActive ? NSColor.systemGreen : NSColor.secondaryLabelColor
+        let pillLabel = createLabel(NSAttributedString(string: pillText, attributes: [
+            .font: NSFont.systemFont(ofSize: 9, weight: .bold),
+            .foregroundColor: pillColor
+        ]))
+        
+        pillBox.contentView = pillLabel
+        pillLabel.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            pillLabel.leadingAnchor.constraint(equalTo: pillBox.leadingAnchor, constant: 6),
+            pillLabel.trailingAnchor.constraint(equalTo: pillBox.trailingAnchor, constant: -6),
+            pillLabel.topAnchor.constraint(equalTo: pillBox.topAnchor, constant: 3),
+            pillLabel.bottomAnchor.constraint(equalTo: pillBox.bottomAnchor, constant: -3)
+        ])
+        
+        topRow.addView(infoStack, in: .leading)
+        topRow.addView(pillBox, in: .trailing)
+        
+        let finalModels = prepareModelsForMenu(quota: quota)
+        let quotaStack = makeModelsHorizontalStack(models: finalModels, width: 502)
+        
+        let bottomRow = NSStackView()
+        bottomRow.orientation = .horizontal
+        bottomRow.alignment = .centerY
+        bottomRow.distribution = .gravityAreas
+        
+        let metaLabel = createLabel(NSAttributedString(string: "PID: \(daemon.pid)  •  Port: \(daemon.httpPort)", attributes: [
+            .font: NSFont.monospacedSystemFont(ofSize: 9, weight: .medium),
+            .foregroundColor: NSColor.tertiaryLabelColor
+        ]))
+        
+        let actionsStack = NSStackView()
+        actionsStack.orientation = .horizontal
+        actionsStack.spacing = 8
+        
+        func createActionButton(title: String, type: String, color: NSColor) -> NSView {
+            let btnBox = NSBox()
+            btnBox.boxType = .custom
+            btnBox.borderWidth = 0
+            btnBox.cornerRadius = 6
+            btnBox.fillColor = color.withAlphaComponent(0.12)
+            
+            let btnLbl = createLabel(NSAttributedString(string: title, attributes: [
+                .font: NSFont.systemFont(ofSize: 10, weight: .bold),
+                .foregroundColor: color
+            ]))
+            btnBox.contentView = btnLbl
+            
+            btnLbl.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                btnLbl.leadingAnchor.constraint(equalTo: btnBox.leadingAnchor, constant: 8),
+                btnLbl.trailingAnchor.constraint(equalTo: btnBox.trailingAnchor, constant: -8),
+                btnLbl.topAnchor.constraint(equalTo: btnBox.topAnchor, constant: 4),
+                btnLbl.bottomAnchor.constraint(equalTo: btnBox.bottomAnchor, constant: -4)
+            ])
+            
+            let button = DaemonActionButton()
+            button.email = email
+            button.port = daemon.httpPort
+            button.pid = daemon.pid
+            button.actionType = type
+            button.isBordered = false
+            button.isTransparent = true
+            button.target = self
+            button.action = #selector(daemonActionClicked(_:))
+            
+            let wrapper = NSView()
+            btnBox.translatesAutoresizingMaskIntoConstraints = false
+            button.translatesAutoresizingMaskIntoConstraints = false
+            wrapper.addSubview(btnBox)
+            wrapper.addSubview(button)
+            
+            NSLayoutConstraint.activate([
+                btnBox.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+                btnBox.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+                btnBox.topAnchor.constraint(equalTo: wrapper.topAnchor),
+                btnBox.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+                
+                button.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+                button.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+                button.topAnchor.constraint(equalTo: wrapper.topAnchor),
+                button.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+                
+                wrapper.heightAnchor.constraint(equalToConstant: 20)
+            ])
+            
+            return wrapper
+        }
+        
+        if !isActive {
+            let activateBtn = createActionButton(title: "Activate", type: "select", color: .systemBlue)
+            actionsStack.addArrangedSubview(activateBtn)
+        }
+        
+        let webBtn = createActionButton(title: "Web UI", type: "webui", color: .systemPurple)
+        let stopBtn = createActionButton(title: "Stop", type: "stop", color: .systemRed)
+        actionsStack.addArrangedSubview(webBtn)
+        actionsStack.addArrangedSubview(stopBtn)
+        
+        bottomRow.addView(metaLabel, in: .leading)
+        bottomRow.addView(actionsStack, in: .trailing)
+        
+        contentStack.addArrangedSubview(topRow)
+        contentStack.addArrangedSubview(quotaStack)
+        contentStack.addArrangedSubview(bottomRow)
+        
+        topRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        quotaStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        bottomRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        
+        containerBox.contentView = contentStack
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            contentStack.leadingAnchor.constraint(equalTo: containerBox.leadingAnchor, constant: 12),
+            contentStack.trailingAnchor.constraint(equalTo: containerBox.trailingAnchor, constant: -12),
+            contentStack.topAnchor.constraint(equalTo: containerBox.topAnchor, constant: 12),
+            contentStack.bottomAnchor.constraint(equalTo: containerBox.bottomAnchor, constant: 12)
+        ])
+        
+        let wrapperView = NSView(frame: NSRect(x: 0, y: 0, width: 550, height: 185))
+        containerBox.translatesAutoresizingMaskIntoConstraints = false
+        wrapperView.addSubview(containerBox)
+        
+        NSLayoutConstraint.activate([
+            containerBox.leadingAnchor.constraint(equalTo: wrapperView.leadingAnchor, constant: 12),
+            containerBox.trailingAnchor.constraint(equalTo: wrapperView.trailingAnchor, constant: -12),
+            containerBox.topAnchor.constraint(equalTo: wrapperView.topAnchor, constant: 4),
+            containerBox.bottomAnchor.constraint(equalTo: wrapperView.bottomAnchor, constant: -4)
+        ])
+        
+        if !isActive {
+            let overlayBtn = DaemonActionButton()
+            overlayBtn.email = email
+            overlayBtn.port = daemon.httpPort
+            overlayBtn.pid = daemon.pid
+            overlayBtn.actionType = "select"
+            overlayBtn.isBordered = false
+            overlayBtn.isTransparent = true
+            overlayBtn.target = self
+            overlayBtn.action = #selector(daemonActionClicked(_:))
+            
+            overlayBtn.translatesAutoresizingMaskIntoConstraints = false
+            wrapperView.addSubview(overlayBtn)
+            
+            NSLayoutConstraint.activate([
+                overlayBtn.leadingAnchor.constraint(equalTo: containerBox.leadingAnchor),
+                overlayBtn.trailingAnchor.constraint(equalTo: containerBox.trailingAnchor),
+                overlayBtn.topAnchor.constraint(equalTo: containerBox.topAnchor),
+                overlayBtn.bottomAnchor.constraint(equalTo: bottomRow.topAnchor, constant: -4)
+            ])
+        }
+        
+        item.view = wrapperView
+        return item
+    }
+
+    @objc private func daemonActionClicked(_ sender: DaemonActionButton) {
+        statusItem.menu?.cancelTracking()
+        
+        switch sender.actionType {
+        case "select":
+            self.selectedEmail = sender.email
+            fetchAndUpdate()
+        case "webui":
+            if let url = URL(string: "http://127.0.0.1:\(sender.port)") {
+                NSWorkspace.shared.open(url)
+            }
+        case "stop":
+            kill(pid_t(sender.pid), SIGTERM)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.fetchAndUpdate()
+            }
+        default:
+            break
+        }
     }
 
     // MARK: - Actions

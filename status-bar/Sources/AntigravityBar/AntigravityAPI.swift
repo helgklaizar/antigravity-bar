@@ -9,6 +9,7 @@ struct DaemonInfo: Codable {
     let httpsPort: Int
     let httpPort: Int
     let csrfToken: String
+    let path: String
 }
 
 struct ModelQuota {
@@ -20,6 +21,8 @@ struct ModelQuota {
 }
 
 struct QuotaData {
+    let email: String?
+    let name: String?
     let models: [ModelQuota]
     let timestamp: Date
 }
@@ -30,6 +33,8 @@ struct CascadeUserStatus: Decodable {
 
 struct UserStatusContainer: Decodable {
     let cascadeModelConfigData: CascadeModelConfigData
+    let email: String?
+    let name: String?
 }
 
 struct CascadeModelConfigData: Decodable {
@@ -48,10 +53,13 @@ struct QuotaInfo: Decodable {
 
 // MARK: - API
 
+@MainActor
 class AntigravityAPI: @unchecked Sendable {
-    @MainActor static let shared = AntigravityAPI()
+    static let shared = AntigravityAPI()
     
     let env: SystemEnvironment
+    
+    @MainActor public var baseDir: URL
     
     private var cachedDaemon: DaemonInfo?
     private var cachedCacheSize: (String, Double) = ("0 B", 0.0)
@@ -59,20 +67,31 @@ class AntigravityAPI: @unchecked Sendable {
     
     init(env: SystemEnvironment = DefaultSystemEnvironment()) {
         self.env = env
+        let home = NSHomeDirectory()
+        let ideDir = URL(fileURLWithPath: home).appendingPathComponent(".gemini/antigravity-ide")
+        let baseDirName = FileManager.default.fileExists(atPath: ideDir.path) ? "antigravity-ide" : "antigravity"
+        self.baseDir = URL(fileURLWithPath: home).appendingPathComponent(".gemini/\(baseDirName)")
+        
         startCacheSizeUpdater()
     }
     
     private func startCacheSizeUpdater() {
         updateCacheSize()
         cacheTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            self?.updateCacheSize()
+            Task { @MainActor in
+                self?.updateCacheSize()
+            }
         }
     }
     
     private func updateCacheSize() {
+        let brain = self.brainDir
+        let conversations = self.conversationsDir
+        let htmlArts = self.htmlArtsDir
+        
         DispatchQueue.global(qos: .background).async { [weak self] in
             guard let self = self else { return }
-            let total = self.dirSize(self.brainDir) + self.dirSize(self.conversationsDir) + self.dirSize(self.htmlArtsDir)
+            let total = self.dirSize(brain) + self.dirSize(conversations) + self.dirSize(htmlArts)
             let formatted = self.formatDirSize(total)
             let mb = Double(total) / (1024 * 1024)
             DispatchQueue.main.async {
@@ -81,20 +100,13 @@ class AntigravityAPI: @unchecked Sendable {
         }
     }
 
-    private let brainDir = URL(fileURLWithPath: NSHomeDirectory())
-        .appendingPathComponent(".gemini/antigravity/brain")
-    private let conversationsDir = URL(fileURLWithPath: NSHomeDirectory())
-        .appendingPathComponent(".gemini/antigravity/conversations")
-    private let browserRecDir = URL(fileURLWithPath: NSHomeDirectory())
-        .appendingPathComponent(".gemini/antigravity/browser_recordings")
-    private let htmlArtsDir = URL(fileURLWithPath: NSHomeDirectory())
-        .appendingPathComponent(".gemini/antigravity/html_artifacts")
-    private let knowledgeDir = URL(fileURLWithPath: NSHomeDirectory())
-        .appendingPathComponent(".gemini/antigravity/knowledge")
-    private let skillsDir = URL(fileURLWithPath: NSHomeDirectory())
-        .appendingPathComponent(".gemini/antigravity/skills")
-    private let workflowsDir = URL(fileURLWithPath: NSHomeDirectory())
-        .appendingPathComponent(".gemini/antigravity/global_workflows")
+    var brainDir: URL { baseDir.appendingPathComponent("brain") }
+    var conversationsDir: URL { baseDir.appendingPathComponent("conversations") }
+    var browserRecDir: URL { baseDir.appendingPathComponent("browser_recordings") }
+    var htmlArtsDir: URL { baseDir.appendingPathComponent("html_artifacts") }
+    var knowledgeDir: URL { baseDir.appendingPathComponent("knowledge") }
+    var skillsDir: URL { baseDir.appendingPathComponent("skills") }
+    var workflowsDir: URL { baseDir.appendingPathComponent("global_workflows") }
 
     // MARK: - Daemon Discovery (process-based + JSON fallback)
 
@@ -104,7 +116,7 @@ class AntigravityAPI: @unchecked Sendable {
         }
         
         // Primary: find running language_server process and extract info
-        if let info = findDaemonFromProcess() {
+        if let info = findActiveDaemons().first {
             cachedDaemon = info
             return info
         }
@@ -117,38 +129,43 @@ class AntigravityAPI: @unchecked Sendable {
         let pid: Int
         let csrfToken: String
         let extPort: Int?
+        let path: String
     }
 
     /// Parse running language_server process args natively to get csrf_token and extension_server_port,
-    /// then validate HTTP on (extPort+0, extPort+1, extPort+2)
-    private func findDaemonFromProcess() -> DaemonInfo? {
+    /// then validate HTTP on active ports
+    func findActiveDaemons() -> [DaemonInfo] {
         let psInfo = findLanguageServerProcesses()
-        guard !psInfo.isEmpty else { return nil }
+        guard !psInfo.isEmpty else { return [] }
 
+        var daemons: [DaemonInfo] = []
         for info in psInfo {
-            // We expect the HTTP port to be either the extension port itself, or +1, or +2
+            // We expect the HTTP port to be either the extension port itself, or +1, or +2.
+            // For standalone daemons without an extension port, we scan standard ports.
             let basePorts: [Int]
             if let ePort = info.extPort {
                 basePorts = [ePort + 2, ePort + 1, ePort]
             } else {
-                continue
+                basePorts = [58642, 58641, 58622, 58621, 58620]
             }
 
             for port in basePorts {
                 if isHTTPReachable(port: port, csrfToken: info.csrfToken) {
-                    return DaemonInfo(
+                    daemons.append(DaemonInfo(
                         pid: info.pid,
                         httpsPort: 0,
                         httpPort: port,
-                        csrfToken: info.csrfToken
-                    )
+                        csrfToken: info.csrfToken,
+                        path: info.path
+                    ))
+                    break // Found active port for this daemon
                 }
             }
         }
-        return nil
+        return daemons
     }
 
-    /// Find all language_server_macos processes and extract PID + csrf_token natively
+    /// Find all language_server processes and extract PID + csrf_token natively
     private func findLanguageServerProcesses() -> [LSProcessInfo] {
         var results: [LSProcessInfo] = []
         let maxPids = 2048
@@ -163,8 +180,11 @@ class AntigravityAPI: @unchecked Sendable {
             var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
             let pathLen = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
             if pathLen > 0 {
-                let path = String(cString: pathBuffer)
-                if path.contains("language_server_macos") {
+                let path = pathBuffer.withUnsafeBufferPointer { ptr in
+                    String(cString: ptr.baseAddress!)
+                }
+                let lowercasedPath = path.lowercased()
+                if lowercasedPath.contains("language_server") {
                     var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
                     var size: Int = 0
                     sysctl(&mib, UInt32(mib.count), nil, &size, nil, 0)
@@ -191,7 +211,7 @@ class AntigravityAPI: @unchecked Sendable {
                                 if let extIdx = args.firstIndex(of: "--extension_server_port"), extIdx + 1 < args.count {
                                     port = Int(args[extIdx + 1])
                                 }
-                                results.append(LSProcessInfo(pid: Int(pid), csrfToken: args[tokenIdx + 1], extPort: port))
+                                results.append(LSProcessInfo(pid: Int(pid), csrfToken: args[tokenIdx + 1], extPort: port, path: path))
                             }
                         }
                     }
@@ -250,8 +270,10 @@ class AntigravityAPI: @unchecked Sendable {
         }.resume()
     }
 
-    func parseQuota(_ parsed: CascadeUserStatus) -> QuotaData? {
+    nonisolated func parseQuota(_ parsed: CascadeUserStatus) -> QuotaData? {
         let configs = parsed.userStatus.cascadeModelConfigData.clientModelConfigs
+        let email = parsed.userStatus.email
+        let name = parsed.userStatus.name
 
         let models: [ModelQuota] = configs.compactMap { config in
             guard let quotaInfo = config.quotaInfo,
@@ -273,10 +295,10 @@ class AntigravityAPI: @unchecked Sendable {
             )
         }
 
-        return QuotaData(models: models, timestamp: Date())
+        return QuotaData(email: email, name: name, models: models, timestamp: Date())
     }
 
-    func formatTime(_ ms: Int) -> String {
+    nonisolated func formatTime(_ ms: Int) -> String {
         if ms <= 0 { return "Ready" }
         let minutes = Int(ceil(Double(ms) / 60000))
         if minutes < 60 { return "\(minutes)m" }
@@ -350,7 +372,7 @@ class AntigravityAPI: @unchecked Sendable {
         return formatDirSize(dirSize(browserRecDir))
     }
 
-    private func dirSize(_ dir: URL) -> Int64 {
+    nonisolated private func dirSize(_ dir: URL) -> Int64 {
         guard let enumerator = env.enumerator(at: dir, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles]) else { return 0 }
         var total: Int64 = 0
         for case let fileURL as URL in enumerator {
@@ -361,7 +383,7 @@ class AntigravityAPI: @unchecked Sendable {
         return total
     }
 
-    private func formatDirSize(_ total: Int64) -> String {
+    nonisolated private func formatDirSize(_ total: Int64) -> String {
         if total < 1024 { return "\(total) B" }
         if total < 1024*1024 { return String(format: "%.1f KB", Double(total)/1024) }
         return String(format: "%.1f MB", Double(total)/(1024*1024))
