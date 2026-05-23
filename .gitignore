@@ -1,0 +1,20 @@
+# OS Metadata
+.DS_Store
+Thumbs.db
+
+# Swift Package Manager build output
+.build/
+.swiftpm/
+DerivedData/
+
+# Local Build Output
+status-bar/Antigravity Bar.app
+status-bar/Stellar Bar.app
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Log files
+*.log
