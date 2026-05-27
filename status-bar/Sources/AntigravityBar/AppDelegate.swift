@@ -55,9 +55,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Polling
 
-    private let backgroundInterval: TimeInterval = 2
-    private let activeInterval: TimeInterval = 2
-    private let retryInterval: TimeInterval = 2
+    private let backgroundInterval: TimeInterval = 10
+    private let activeInterval: TimeInterval = 10
+    private let retryInterval: TimeInterval = 10
 
     private func startPolling() {
         fetchAndUpdate()
@@ -221,7 +221,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ram: ram,
             historyCPU: SystemStats.shared.cpuHistory,
             historyGPU: SystemStats.shared.gpuHistory,
-            historyRAM: SystemStats.shared.ramHistory
+            historyRAM: SystemStats.shared.ramHistory,
+            credits: lastQuota?.credits
         )
     }
 
@@ -317,15 +318,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         menu.addItem(.separator())
         
-        // 4. Workflows Radar widget (Restored)
-        menu.addItem(makeWorkflowsRadarItem())
-        
-        menu.addItem(.separator())
-        
-        // 6. Dynamic Skills Hub (Restored)
-        menu.addItem(makeDynamicSkillsItem())
-        
-        menu.addItem(.separator())
+
         
         // 8. Top RAM Processes
         menu.addItem(makeAppsHorizontalItem())
@@ -395,11 +388,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         let cacheSize = api.cacheSize().formatted
         let allActions: [(String, String, NSColor)] = [
-            ("AI\nInstaller", "wand.and.stars", .systemPurple),
             ("Open\n.gemini", "folder", .systemBlue),
             ("New\nChat", "bubble.left.and.bubble.right", .systemGreen),
-            ("Chat\nAgent", "person.and.sparkles", .systemTeal),
-            ("Sync\nEcosystem", "arrow.triangle.2.circlepath", .systemOrange),
+            ("Гитхаб\nБД", "externaldrive.connected.to.line.below", .systemTeal),
             ("Restart &\nReload", "arrow.clockwise", .systemYellow),
             ("Clean Cache\n\(cacheSize)", "trash", .systemRed),
             ("Quit\nApp", "xmark.circle", .systemGray)
@@ -496,8 +487,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return rowStack
         }
         
-        let row1 = createRow(actions: Array(allActions[0..<4]), startIndex: 0)
-        let row2 = createRow(actions: Array(allActions[4..<8]), startIndex: 4)
+        let row1 = createRow(actions: Array(allActions[0..<3]), startIndex: 0)
+        let row2 = createRow(actions: Array(allActions[3..<6]), startIndex: 3)
         
         mainStack.addArrangedSubview(row1)
         mainStack.addArrangedSubview(row2)
@@ -535,7 +526,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         mainStack.addArrangedSubview(makeSectionHeader(iconName: "memorychip", title: "TOP RAM PROCESSES"))
         
-        let topApps = Array(ProcessManager.getTopProcesses().prefix(6))
+        let topApps = Array(ProcessManager.getTopProcesses().prefix(16))
         
         let gridStack = NSStackView()
         gridStack.orientation = .horizontal
@@ -601,10 +592,42 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             row.addArrangedSubview(spacer)
             row.addArrangedSubview(memField)
             
+            if !app.isSystemGroup {
+                let closeBtn = NSButton()
+                closeBtn.title = ""
+                closeBtn.bezelStyle = .shadowlessSquare
+                closeBtn.isBordered = false
+                if #available(macOS 12.0, *) {
+                    let config = NSImage.SymbolConfiguration(pointSize: 9, weight: .bold)
+                    let img = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close")?.withSymbolConfiguration(config)
+                    img?.isTemplate = true
+                    closeBtn.image = img
+                }
+                closeBtn.contentTintColor = NSColor.secondaryLabelColor.withAlphaComponent(0.5)
+                closeBtn.target = self
+                closeBtn.action = #selector(killProcessClicked(_:))
+                closeBtn.tag = app.processes.first?.pid ?? 0
+                
+                closeBtn.translatesAutoresizingMaskIntoConstraints = false
+                NSLayoutConstraint.activate([
+                    closeBtn.widthAnchor.constraint(equalToConstant: 14),
+                    closeBtn.heightAnchor.constraint(equalToConstant: 14)
+                ])
+                row.addArrangedSubview(closeBtn)
+            } else {
+                let placeholder = NSView()
+                placeholder.translatesAutoresizingMaskIntoConstraints = false
+                NSLayoutConstraint.activate([
+                    placeholder.widthAnchor.constraint(equalToConstant: 14),
+                    placeholder.heightAnchor.constraint(equalToConstant: 14)
+                ])
+                row.addArrangedSubview(placeholder)
+            }
+            
             row.translatesAutoresizingMaskIntoConstraints = false
             row.widthAnchor.constraint(equalToConstant: 240).isActive = true
             
-            if i < 3 {
+            if i < (topApps.count + 1) / 2 {
                 col1.addArrangedSubview(row)
             } else {
                 col2.addArrangedSubview(row)
@@ -631,14 +654,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             mainStack.bottomAnchor.constraint(equalTo: containerBox.bottomAnchor, constant: -12)
         ])
         
-        let wrapper = NSView(frame: NSRect(x: 0, y: 0, width: 550, height: 140))
+        let wrapper = NSView(frame: NSRect(x: 0, y: 0, width: 550, height: 260))
         containerBox.translatesAutoresizingMaskIntoConstraints = false
         wrapper.addSubview(containerBox)
         NSLayoutConstraint.activate([
             containerBox.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: 12),
             containerBox.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor, constant: -12),
             containerBox.centerYAnchor.constraint(equalTo: wrapper.centerYAnchor),
-            containerBox.heightAnchor.constraint(equalToConstant: 125)
+            containerBox.heightAnchor.constraint(equalToConstant: 245)
         ])
         
         item.view = wrapper
@@ -1022,16 +1045,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             switch segment {
-            case 0: self.showInstallerWindow()
-            case 1: self.openGeminiFolder()
-            case 2: self.launchNewChat()
-            case 3: self.launchChatAgent()
-            case 4: self.syncEcosystem()
-            case 5: self.restartAndReload()
-            case 6: self.fullCleanup()
-            case 7: self.quitApp()
+            case 0: self.openGeminiFolder()
+            case 1: self.launchNewChat()
+            case 2: self.launchGitReposDatabase()
+            case 3: self.restartAndReload()
+            case 4: self.fullCleanup()
+            case 5: self.quitApp()
             default: break
             }
+        }
+    }
+    
+    @objc private func killProcessClicked(_ sender: NSButton) {
+        let pid = sender.tag
+        if pid > 0 {
+            ProcessManager.killProcess(pid: pid)
         }
     }
 
@@ -1039,8 +1067,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         TerminalHelper.openNewChat()
     }
     
-    private func launchChatAgent() {
-        TerminalHelper.openNewChatAgent()
+    private func launchGitReposDatabase() {
+        TerminalHelper.openGitReposDatabase()
     }
     
     private func syncEcosystem() {
@@ -1051,94 +1079,119 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let stackView = NSStackView()
         stackView.orientation = .horizontal
         stackView.distribution = .fillEqually
-        stackView.spacing = 8
+        stackView.spacing = 16
         
-        for model in models {
-            let pct = Int(model.remainingPercentage)
-            let icon: String
-            if pct >= 80 { icon = "🟢" }
-            else if pct >= 60 { icon = "🟡" }
-            else if pct >= 40 { icon = "🟠" }
-            else { icon = "🔴" }
+        let groups = StatusBarUI.groupModels(models)
+        
+        for group in groups {
+            let containerBox = NSBox()
+            containerBox.boxType = .custom
+            containerBox.borderWidth = 1.5
             
-            let cleanLabel = model.label
-                .replacingOccurrences(of: " (Thinking)", with: "")
-                .replacingOccurrences(of: " (Medium)", with: "")
+            let isGemini = group.name == "Gemini"
+            let accentColor = isGemini ? NSColor.systemIndigo : NSColor.systemPurple
+            let pctColor = StatusBarUI.colorForPercentage(group.pct)
             
-            var vendor = ""
-            var tier = ""
-            if cleanLabel.hasPrefix("Gemini ") {
-                vendor = "Gemini"
-                tier = cleanLabel.replacingOccurrences(of: "Gemini ", with: "")
-            } else if cleanLabel.hasPrefix("Claude ") {
-                vendor = "Claude"
-                tier = cleanLabel.replacingOccurrences(of: "Claude ", with: "")
-            } else if cleanLabel.hasPrefix("GPT-OSS ") {
-                vendor = "GPT-OSS"
-                tier = cleanLabel.replacingOccurrences(of: "GPT-OSS ", with: "")
-            } else {
-                let parts = cleanLabel.split(separator: " ", maxSplits: 1)
-                vendor = String(parts.first ?? "")
-                tier = parts.count > 1 ? String(parts[1]) : ""
-            }
+            containerBox.borderColor = accentColor.withAlphaComponent(0.2)
+            containerBox.cornerRadius = 16
+            containerBox.fillColor = accentColor.withAlphaComponent(0.06)
             
-            if tier == "Sonnet 4.6" { tier = "Sonnet" }
-            if tier == "Opus 4.6" { tier = "Opus" }
+            let hStack = NSStackView()
+            hStack.orientation = .horizontal
+            hStack.alignment = .centerY
+            hStack.spacing = 12
             
-            var vendorColor: NSColor = .secondaryLabelColor
-            if vendor == "Gemini" { vendorColor = .systemBlue }
-            else if vendor == "Claude" { vendorColor = .systemOrange }
-            else if vendor == "GPT-OSS" { vendorColor = .systemGreen }
+            // Left side: Icon + Title + Time Remaining
+            let leftVStack = NSStackView()
+            leftVStack.orientation = .vertical
+            leftVStack.alignment = .leading
+            leftVStack.spacing = 4
             
-            let vendorField = createLabel(NSAttributedString(string: vendor.uppercased(), attributes: [
-                .font: NSFont.systemFont(ofSize: 8, weight: .bold),
-                .foregroundColor: vendorColor.withAlphaComponent(0.9)
-            ]))
+            let titleHStack = NSStackView()
+            titleHStack.orientation = .horizontal
+            titleHStack.alignment = .centerY
+            titleHStack.spacing = 6
             
-            let tierField = createLabel(NSAttributedString(string: tier, attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .heavy),
+            let iconName = isGemini ? "sparkles" : "brain"
+            let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+            let iconImg = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+            let iconView = NSImageView(image: iconImg ?? NSImage())
+            iconView.contentTintColor = accentColor
+            
+            let titleLabel = createLabel(NSAttributedString(string: group.name, attributes: [
+                .font: NSFont.systemFont(ofSize: 14, weight: .bold),
                 .foregroundColor: NSColor.labelColor
             ]))
             
-            let pctField = createLabel(NSAttributedString(string: "\(icon) \(pct)%", attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
-                .foregroundColor: NSColor.labelColor
+            titleHStack.addArrangedSubview(iconView)
+            titleHStack.addArrangedSubview(titleLabel)
+            
+            let h = Int(group.secsLeft) / 3600
+            let m = (Int(group.secsLeft) % 3600) / 60
+            let timeStr = "Resets in \(h)h \(m)m"
+            let timeLabel = createLabel(NSAttributedString(string: timeStr, attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                .foregroundColor: NSColor.secondaryLabelColor
             ]))
             
-            let timeField = createLabel(NSAttributedString(string: model.timeUntilReset, attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium),
-                .foregroundColor: NSColor.tertiaryLabelColor
+            leftVStack.addArrangedSubview(titleHStack)
+            leftVStack.addArrangedSubview(timeLabel)
+            
+            // Right side: Percentage + Progress Bar
+            let rightVStack = NSStackView()
+            rightVStack.orientation = .vertical
+            rightVStack.alignment = .trailing
+            rightVStack.spacing = 6
+            
+            let pctLabel = createLabel(NSAttributedString(string: "\(group.pct)%", attributes: [
+                .font: NSFont.systemFont(ofSize: 22, weight: .heavy),
+                .foregroundColor: pctColor
             ]))
             
-            let vStack = NSStackView()
-            vStack.orientation = .vertical
-            vStack.alignment = .centerX
-            vStack.spacing = 1
+            let progressTrack = NSBox()
+            progressTrack.boxType = .custom
+            progressTrack.borderWidth = 0
+            progressTrack.cornerRadius = 3
+            progressTrack.fillColor = NSColor.labelColor.withAlphaComponent(0.08)
+            progressTrack.translatesAutoresizingMaskIntoConstraints = false
+            progressTrack.heightAnchor.constraint(equalToConstant: 6).isActive = true
+            progressTrack.widthAnchor.constraint(equalToConstant: 60).isActive = true
             
-            vStack.addArrangedSubview(vendorField)
-            vStack.addArrangedSubview(tierField)
-            vStack.addArrangedSubview(pctField)
-            vStack.addArrangedSubview(timeField)
+            let progressFill = NSBox()
+            progressFill.boxType = .custom
+            progressFill.borderWidth = 0
+            progressFill.cornerRadius = 3
+            progressFill.fillColor = pctColor
+            progressFill.translatesAutoresizingMaskIntoConstraints = false
             
-            vStack.setCustomSpacing(3, after: tierField)
-            vStack.setCustomSpacing(1, after: pctField)
-            
-            let box = NSBox()
-            box.boxType = .custom
-            box.borderWidth = 0
-            box.cornerRadius = 10
-            box.fillColor = NSColor.labelColor.withAlphaComponent(0.04)
-            box.contentView = vStack
-            
-            vStack.translatesAutoresizingMaskIntoConstraints = false
+            progressTrack.addSubview(progressFill)
             NSLayoutConstraint.activate([
-                vStack.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 4),
-                vStack.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -4),
-                vStack.topAnchor.constraint(equalTo: box.topAnchor, constant: 6),
-                vStack.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: 6)
+                progressFill.leadingAnchor.constraint(equalTo: progressTrack.leadingAnchor),
+                progressFill.topAnchor.constraint(equalTo: progressTrack.topAnchor),
+                progressFill.bottomAnchor.constraint(equalTo: progressTrack.bottomAnchor),
+                progressFill.widthAnchor.constraint(equalTo: progressTrack.widthAnchor, multiplier: CGFloat(max(2, group.pct)) / 100.0)
             ])
             
-            stackView.addArrangedSubview(box)
+            rightVStack.addArrangedSubview(pctLabel)
+            rightVStack.addArrangedSubview(progressTrack)
+            
+            let spacer = NSView()
+            spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            
+            hStack.addArrangedSubview(leftVStack)
+            hStack.addArrangedSubview(spacer)
+            hStack.addArrangedSubview(rightVStack)
+            
+            containerBox.contentView = hStack
+            hStack.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                hStack.leadingAnchor.constraint(equalTo: containerBox.leadingAnchor, constant: 16),
+                hStack.trailingAnchor.constraint(equalTo: containerBox.trailingAnchor, constant: -16),
+                hStack.topAnchor.constraint(equalTo: containerBox.topAnchor, constant: 14),
+                hStack.bottomAnchor.constraint(equalTo: containerBox.bottomAnchor, constant: -14)
+            ])
+            
+            stackView.addArrangedSubview(containerBox)
         }
         
         stackView.translatesAutoresizingMaskIntoConstraints = false

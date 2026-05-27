@@ -35,6 +35,7 @@ final class MockSystemEnvironment: @unchecked Sendable, SystemEnvironment {
 
 // MARK: - Tests
 
+@MainActor
 final class AntigravityBarTests: XCTestCase {
     
     var mockEnv: MockSystemEnvironment!
@@ -100,7 +101,7 @@ final class AntigravityBarTests: XCTestCase {
     }
     
     func testClearBrainAndCodeTrackerDeletesCorrectFiles() {
-        let brainDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".gemini/antigravity/brain")
+        let brainDir = api.brainDir
         
         let file1 = brainDir.appendingPathComponent("123.md")
         let fileDS = brainDir.appendingPathComponent(".DS_Store")

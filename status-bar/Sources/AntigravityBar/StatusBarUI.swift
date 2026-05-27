@@ -89,7 +89,7 @@ struct StatusBarUI {
         return NSColor.systemGreen
     }
 
-    static func makeBarTitle(models: [ModelQuota], daemonOnline: Bool, cacheFormatted: String, cacheMB: Double, cpu: Int, gpu: Int, ram: Int, historyCPU: [Int], historyGPU: [Int], historyRAM: [Int]) -> NSAttributedString {
+    static func makeBarTitle(models: [ModelQuota], daemonOnline: Bool, cacheFormatted: String, cacheMB: Double, cpu: Int, gpu: Int, ram: Int, historyCPU: [Int], historyGPU: [Int], historyRAM: [Int], credits: String?) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let pctFont = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
         let sepFont = NSFont.systemFont(ofSize: 12, weight: .regular)
@@ -126,6 +126,14 @@ struct StatusBarUI {
             }
         }
 
+        if let cr = credits {
+            let crStr = NSAttributedString(string: "\(cr) CR", attributes: [
+                .font: pctFont, .foregroundColor: NSColor.systemYellow
+            ])
+            result.append(crStr)
+            result.append(sep)
+        }
+
         // 3. Stats
         let stats: [(String, Int, [Int], NSColor)] = [
             ("CPU", cpu, historyCPU, colorForResourceUsage(cpu)),
@@ -160,9 +168,8 @@ struct StatusBarUI {
             let keywords: [String]
         }
         let groups = [
-            Group(name: "Pro", keywords: ["pro"]),
-            Group(name: "Flash", keywords: ["flash"]),
-            Group(name: "Claude", keywords: ["claude", "sonnet", "opus"])
+            Group(name: "Gemini", keywords: ["gemini", "pro", "flash", "3.5", "3.1"]),
+            Group(name: "Claude/OSS", keywords: ["claude", "sonnet", "opus", "haiku", "oss", "llama", "mistral", "mixtral", "gemma", "qwen", "deepseek"])
         ]
 
         var result: [(name: String, pct: Int, secsLeft: Double)] = []

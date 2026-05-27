@@ -10,6 +10,7 @@ struct DaemonInfo: Codable {
     let httpPort: Int
     let csrfToken: String
     let path: String
+    let isHttps: Bool
 }
 
 struct ModelQuota {
@@ -25,6 +26,16 @@ struct QuotaData {
     let name: String?
     let models: [ModelQuota]
     let timestamp: Date
+    let credits: String?
+}
+
+struct AvailableCredit: Decodable {
+    let creditType: String?
+    let creditAmount: String?
+}
+
+struct UserTier: Decodable {
+    let availableCredits: [AvailableCredit]?
 }
 
 struct CascadeUserStatus: Decodable {
@@ -35,7 +46,19 @@ struct UserStatusContainer: Decodable {
     let cascadeModelConfigData: CascadeModelConfigData
     let email: String?
     let name: String?
+    let userTier: UserTier?
 }
+
+class InsecureSessionDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        if let trust = challenge.protectionSpace.serverTrust {
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        } else {
+            completionHandler(.performDefaultHandling, nil)
+        }
+    }
+}
+let sharedInsecureSession = URLSession(configuration: .ephemeral, delegate: InsecureSessionDelegate(), delegateQueue: nil)
 
 struct CascadeModelConfigData: Decodable {
     let clientModelConfigs: [ClientModelConfig]
@@ -59,7 +82,11 @@ class AntigravityAPI: @unchecked Sendable {
     
     let env: SystemEnvironment
     
-    @MainActor public var baseDir: URL
+    @MainActor public var baseDir: URL {
+        didSet {
+            updateCacheSize()
+        }
+    }
     
     private var cachedDaemon: DaemonInfo?
     private var cachedCacheSize: (String, Double) = ("0 B", 0.0)
@@ -111,7 +138,7 @@ class AntigravityAPI: @unchecked Sendable {
     // MARK: - Daemon Discovery (process-based + JSON fallback)
 
     func findActiveDaemon() -> DaemonInfo? {
-        if let cached = cachedDaemon, isHTTPReachable(port: cached.httpPort, csrfToken: cached.csrfToken) {
+        if let cached = cachedDaemon, isHTTPReachable(port: cached.httpPort, csrfToken: cached.csrfToken, isHttps: cached.isHttps) {
             return cached
         }
         
@@ -132,6 +159,43 @@ class AntigravityAPI: @unchecked Sendable {
         let path: String
     }
 
+    private func getListeningPorts(for pid: Int) -> [Int] {
+        let task = Process()
+        task.launchPath = "/usr/sbin/lsof"
+        task.arguments = ["-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-n", "-P"]
+        
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        
+        do {
+            try task.run()
+            task.waitUntilExit()
+            
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8) {
+                var ports: [Int] = []
+                let lines = output.components(separatedBy: .newlines)
+                for line in lines {
+                    if line.contains("LISTEN") {
+                        let parts = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+                        if parts.count >= 2, parts.last == "(LISTEN)" {
+                            let nameField = parts[parts.count - 2]
+                            if let portStr = nameField.components(separatedBy: ":").last,
+                               let port = Int(portStr) {
+                                ports.append(port)
+                            }
+                        }
+                    }
+                }
+                return ports
+            }
+        } catch {
+            // Ignore error
+        }
+        return []
+    }
+
     /// Parse running language_server process args natively to get csrf_token and extension_server_port,
     /// then validate HTTP on active ports
     func findActiveDaemons() -> [DaemonInfo] {
@@ -149,16 +213,16 @@ class AntigravityAPI: @unchecked Sendable {
                 basePorts = [58642, 58641, 58622, 58621, 58620]
             }
 
-            for port in basePorts {
-                if isHTTPReachable(port: port, csrfToken: info.csrfToken) {
-                    daemons.append(DaemonInfo(
-                        pid: info.pid,
-                        httpsPort: 0,
-                        httpPort: port,
-                        csrfToken: info.csrfToken,
-                        path: info.path
-                    ))
-                    break // Found active port for this daemon
+            let dynamicPorts = getListeningPorts(for: info.pid)
+            let portsToTry = dynamicPorts + basePorts + [50150, 50151]
+
+            for port in portsToTry {
+                if isHTTPReachable(port: port, csrfToken: info.csrfToken, isHttps: true) {
+                    daemons.append(DaemonInfo(pid: info.pid, httpsPort: port, httpPort: port, csrfToken: info.csrfToken, path: info.path, isHttps: true))
+                    break
+                } else if isHTTPReachable(port: port, csrfToken: info.csrfToken, isHttps: false) {
+                    daemons.append(DaemonInfo(pid: info.pid, httpsPort: port, httpPort: port, csrfToken: info.csrfToken, path: info.path, isHttps: false))
+                    break
                 }
             }
         }
@@ -224,8 +288,9 @@ class AntigravityAPI: @unchecked Sendable {
 
 
     /// Lightweight HTTP check — send minimal request, expect any response
-    private func isHTTPReachable(port: Int, csrfToken: String) -> Bool {
-        let url = URL(string: "http://127.0.0.1:\(port)/exa.language_server_pb.LanguageServerService/GetUserStatus")!
+    private func isHTTPReachable(port: Int, csrfToken: String, isHttps: Bool = false) -> Bool {
+        let scheme = isHttps ? "https" : "http"
+        let url = URL(string: "\(scheme)://127.0.0.1:\(port)/exa.language_server_pb.LanguageServerService/GetUserStatus")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
@@ -238,7 +303,7 @@ class AntigravityAPI: @unchecked Sendable {
         final class ReachableStatus: @unchecked Sendable { var ok = false }
         let status = ReachableStatus()
         
-        URLSession.shared.dataTask(with: request) { data, response, _ in
+        sharedInsecureSession.dataTask(with: request) { data, response, _ in
             if let http = response as? HTTPURLResponse, http.statusCode == 200 {
                 status.ok = true
             }
@@ -248,7 +313,8 @@ class AntigravityAPI: @unchecked Sendable {
         return status.ok
     }    // Fetch quota using Connect/Protobuf JSON over HTTP
     func fetchQuota(daemon: DaemonInfo, completion: @Sendable @escaping (QuotaData?) -> Void) {
-        let url = URL(string: "http://127.0.0.1:\(daemon.httpPort)/exa.language_server_pb.LanguageServerService/GetUserStatus")!
+        let scheme = daemon.isHttps ? "https" : "http"
+        let url = URL(string: "\(scheme)://127.0.0.1:\(daemon.httpPort)/exa.language_server_pb.LanguageServerService/GetUserStatus")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
@@ -259,7 +325,7 @@ class AntigravityAPI: @unchecked Sendable {
         let body = ["metadata": ["ideName": "antigravity", "extensionName": "antigravity", "locale": "en"]]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        sharedInsecureSession.dataTask(with: request) { data, response, error in
             guard let data = data,
                   let parsed = try? JSONDecoder().decode(CascadeUserStatus.self, from: data)
             else {
@@ -295,7 +361,8 @@ class AntigravityAPI: @unchecked Sendable {
             )
         }
 
-        return QuotaData(email: email, name: name, models: models, timestamp: Date())
+        let credits = parsed.userStatus.userTier?.availableCredits?.first?.creditAmount
+        return QuotaData(email: email, name: name, models: models, timestamp: Date(), credits: credits)
     }
 
     nonisolated func formatTime(_ ms: Int) -> String {
