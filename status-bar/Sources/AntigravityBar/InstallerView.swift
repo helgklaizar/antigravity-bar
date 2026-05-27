@@ -156,6 +156,7 @@ struct InstallerView: View {
                     Image(systemName: "wand.and.stars")
                         .font(.system(size: 40))
                         .foregroundColor(.purple)
+                        .accessibilityHidden(true)
                     Text("AI Ecosystem Installer")
                         .font(.title2)
                         .fontWeight(.bold)
@@ -174,6 +175,7 @@ struct InstallerView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Settings")
                 .padding()
             }
             .background(Color(NSColor.controlBackgroundColor))
@@ -366,6 +368,7 @@ struct SourcesSettingsView: View {
                                             .foregroundColor(.red)
                                     }
                                     .buttonStyle(.plain)
+                                    .accessibilityLabel("Remove repository")
                                 }
                                 .padding(.vertical, 2)
                             }

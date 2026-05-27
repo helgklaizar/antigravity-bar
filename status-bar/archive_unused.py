@@ -6,12 +6,14 @@ antigravity_dir = os.path.expanduser("~/.gemini/antigravity")
 brain_dir = os.path.join(antigravity_dir, "brain")
 
 def archive_unused(base_dir, archive_target):
-    if not os.path.exists(base_dir): return
+    if not os.path.exists(base_dir):
+        return
     os.makedirs(archive_target, exist_ok=True)
     
     files_to_check = []
     for root, dirs, files in os.walk(base_dir):
-        if "archive" in root: continue
+        if "archive" in root:
+            continue
         for f in files:
             if f.endswith(".md"):
                 files_to_check.append(os.path.join(root, f))

@@ -224,6 +224,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             historyRAM: SystemStats.shared.ramHistory,
             credits: lastQuota?.credits
         )
+        let accessibilityLabel = "Antigravity Status Bar. CPU: \(cpu)%, GPU: \(gpu)%, RAM: \(ram)%, Cache: \(cache.formatted)"
+        statusItem.button?.setAccessibilityLabel(accessibilityLabel)
     }
 
     // MARK: - Click Handling
