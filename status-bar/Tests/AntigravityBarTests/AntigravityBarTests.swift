@@ -114,4 +114,51 @@ final class AntigravityBarTests: XCTestCase {
         XCTAssertEqual(mockEnv.removedURLs.count, 1)
         XCTAssertEqual(mockEnv.removedURLs.first, file1)
     }
+    
+    func testModelGrouping() {
+        let models = [
+            ModelQuota(label: "Gemini 3.5 Flash (Medium) New", remainingPercentage: 80.0, isExhausted: false, timeUntilReset: "Ready", secondsUntilReset: 0),
+            ModelQuota(label: "Gemini 3.5 Flash (High) New", remainingPercentage: 50.0, isExhausted: false, timeUntilReset: "Ready", secondsUntilReset: 0),
+            ModelQuota(label: "Gemini 3.1 Pro (Low)", remainingPercentage: 90.0, isExhausted: false, timeUntilReset: "Ready", secondsUntilReset: 0),
+            ModelQuota(label: "Gemini 3.1 Pro (High)", remainingPercentage: 40.0, isExhausted: false, timeUntilReset: "Ready", secondsUntilReset: 0),
+            ModelQuota(label: "Gemini 3 Flash", remainingPercentage: 100.0, isExhausted: false, timeUntilReset: "Ready", secondsUntilReset: 0),
+            ModelQuota(label: "Claude 3.5 Sonnet", remainingPercentage: 70.0, isExhausted: false, timeUntilReset: "Ready", secondsUntilReset: 0)
+        ]
+        
+        // 1. Test Menu Bar grouping (isMenuBar: true)
+        let menuBarGroups = StatusBarUI.groupModels(models, isMenuBar: true)
+        XCTAssertEqual(menuBarGroups.count, 2)
+        
+        let geminiGroup = menuBarGroups.first { $0.name == "Gemini" }
+        XCTAssertNotNil(geminiGroup)
+        XCTAssertEqual(geminiGroup?.pct, 40)
+        
+        let claudeGroup = menuBarGroups.first { $0.name == "Claude/OSS" }
+        XCTAssertNotNil(claudeGroup)
+        XCTAssertEqual(claudeGroup?.pct, 70)
+        
+        // 2. Test Popover grouping (isMenuBar: false)
+        let popoverGroups = StatusBarUI.groupModels(models, isMenuBar: false)
+        XCTAssertEqual(popoverGroups.count, 5)
+        
+        let g35 = popoverGroups.first { $0.name == "Gemini 3.5" }
+        XCTAssertNotNil(g35)
+        XCTAssertEqual(g35?.pct, 50)
+        
+        let g31High = popoverGroups.first { $0.name == "Gemini 3.1 Pro (High)" }
+        XCTAssertNotNil(g31High)
+        XCTAssertEqual(g31High?.pct, 40)
+        
+        let g31Low = popoverGroups.first { $0.name == "Gemini 3.1 Pro (Low)" }
+        XCTAssertNotNil(g31Low)
+        XCTAssertEqual(g31Low?.pct, 90)
+        
+        let g30 = popoverGroups.first { $0.name == "Gemini 3.0" }
+        XCTAssertNotNil(g30)
+        XCTAssertEqual(g30?.pct, 100)
+        
+        let claudeOSS = popoverGroups.first { $0.name == "Claude/OSS" }
+        XCTAssertNotNil(claudeOSS)
+        XCTAssertEqual(claudeOSS?.pct, 70)
+    }
 }

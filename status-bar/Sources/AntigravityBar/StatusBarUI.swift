@@ -115,7 +115,7 @@ struct StatusBarUI {
                 result.append(sep)
             }
         } else {
-            let grouped = groupModels(models)
+            let grouped = groupModels(models, isMenuBar: true)
             for g in grouped {
                 let color = colorForPercentage(g.pct)
 
@@ -162,29 +162,75 @@ struct StatusBarUI {
         return result
     }
 
-    static func groupModels(_ models: [ModelQuota]) -> [(name: String, pct: Int, secsLeft: Double)] {
-        struct Group {
-            let name: String
-            let keywords: [String]
-        }
-        let groups = [
-            Group(name: "Gemini", keywords: ["gemini", "pro", "flash", "3.5", "3.1"]),
-            Group(name: "Claude/OSS", keywords: ["claude", "sonnet", "opus", "haiku", "oss", "llama", "mistral", "mixtral", "gemma", "qwen", "deepseek"])
-        ]
-
-        var result: [(name: String, pct: Int, secsLeft: Double)] = []
-        for group in groups {
-            let matching = models.filter { m in
-                let l = m.label.lowercased()
-                return group.keywords.contains(where: { l.contains($0) })
+    static func groupModels(_ models: [ModelQuota], isMenuBar: Bool = false) -> [(name: String, pct: Int, secsLeft: Double)] {
+        if isMenuBar {
+            struct Group {
+                let name: String
+                let keywords: [String]
             }
-            if !matching.isEmpty {
+            let groups = [
+                Group(name: "Gemini", keywords: ["gemini", "pro", "flash", "3.5", "3.1"]),
+                Group(name: "Claude/OSS", keywords: ["claude", "sonnet", "opus", "haiku", "oss", "llama", "mistral", "mixtral", "gemma", "qwen", "deepseek"])
+            ]
+
+            var result: [(name: String, pct: Int, secsLeft: Double)] = []
+            for group in groups {
+                let matching = models.filter { m in
+                    let l = m.label.lowercased()
+                    return group.keywords.contains(where: { l.contains($0) })
+                }
+                if !matching.isEmpty {
+                    let minPct = Int(matching.map(\.remainingPercentage).min() ?? 0)
+                    let minSecs = matching.map(\.secondsUntilReset).min() ?? 0
+                    result.append((name: group.name, pct: minPct, secsLeft: minSecs))
+                }
+            }
+            return result
+        } else {
+            var result: [(name: String, pct: Int, secsLeft: Double)] = []
+            
+            let getMatching: (@Sendable (ModelQuota) -> Bool) -> (minPct: Int, minSecs: Double)? = { predicate in
+                let matching = models.filter(predicate)
+                guard !matching.isEmpty else { return nil }
                 let minPct = Int(matching.map(\.remainingPercentage).min() ?? 0)
                 let minSecs = matching.map(\.secondsUntilReset).min() ?? 0
-                result.append((name: group.name, pct: minPct, secsLeft: minSecs))
+                return (minPct, minSecs)
             }
+            
+            // Gemini 3.5
+            if let stats = getMatching({ $0.label.lowercased().contains("3.5") }) {
+                result.append((name: "Gemini 3.5", pct: stats.minPct, secsLeft: stats.minSecs))
+            }
+            
+            // Gemini 3.1 Pro (High)
+            if let stats = getMatching({ $0.label.lowercased().contains("3.1") && $0.label.lowercased().contains("high") }) {
+                result.append((name: "Gemini 3.1 Pro (High)", pct: stats.minPct, secsLeft: stats.minSecs))
+            }
+            
+            // Gemini 3.1 Pro (Low)
+            if let stats = getMatching({ $0.label.lowercased().contains("3.1") && $0.label.lowercased().contains("low") }) {
+                result.append((name: "Gemini 3.1 Pro (Low)", pct: stats.minPct, secsLeft: stats.minSecs))
+            }
+            
+            // Gemini 3.0
+            if let stats = getMatching({ m in
+                let l = m.label.lowercased()
+                return l.contains("3.0") || l.contains("gemini 3 flash") || (l.contains("gemini 3") && !l.contains("3.1") && !l.contains("3.5"))
+            }) {
+                result.append((name: "Gemini 3.0", pct: stats.minPct, secsLeft: stats.minSecs))
+            }
+            
+            // Claude/OSS
+            let claudeKeywords = ["claude", "sonnet", "opus", "haiku", "oss", "llama", "mistral", "mixtral", "gemma", "qwen", "deepseek"]
+            if let stats = getMatching({ m in
+                let l = m.label.lowercased()
+                return claudeKeywords.contains(where: { l.contains($0) })
+            }) {
+                result.append((name: "Claude/OSS", pct: stats.minPct, secsLeft: stats.minSecs))
+            }
+            
+            return result
         }
-        return result
     }
 
     static func colorForPercentage(_ pct: Int) -> NSColor {

@@ -239,6 +239,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let sortedModels = quota.models.sorted { m1, m2 in
             func priority(_ label: String) -> Int {
                 let l = label.lowercased()
+                if l.contains("3.5") { return 5 }
                 if l.contains("3.1") || l.contains("pro") {
                     if l.contains("high") { return 10 }
                     if l.contains("low") { return 11 }
@@ -256,32 +257,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if p1 != p2 { return p1 < p2 }
             return m1.label < m2.label
         }
-
-        var finalModels: [ModelQuota] = []
-        var proModels: [ModelQuota] = []
-        for m in sortedModels {
-            if m.label.lowercased().contains("3.1") {
-                proModels.append(m)
-            } else {
-                finalModels.append(m)
-            }
-        }
-        
-        if !proModels.isEmpty {
-            let minPct = proModels.map { $0.remainingPercentage }.min() ?? 0
-            let minSecs = proModels.map { $0.secondsUntilReset }.min() ?? 0
-            let minTimeStr = proModels.first(where: { $0.secondsUntilReset == minSecs })?.timeUntilReset ?? ""
-            let isExh = proModels.allSatisfy { $0.isExhausted }
-            let combined = ModelQuota(
-                label: "Gemini 3.1 Pro",
-                remainingPercentage: minPct,
-                isExhausted: isExh,
-                timeUntilReset: minTimeStr,
-                secondsUntilReset: minSecs
-            )
-            finalModels.insert(combined, at: 0)
-        }
-        return finalModels
+        return sortedModels
     }
 
     private func showContextMenu() {
@@ -1078,127 +1054,156 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func makeModelsHorizontalStack(models: [ModelQuota], width: CGFloat) -> NSStackView {
-        let stackView = NSStackView()
-        stackView.orientation = .horizontal
-        stackView.distribution = .fillEqually
-        stackView.spacing = 16
+        let mainStack = NSStackView()
+        mainStack.orientation = .vertical
+        mainStack.alignment = .leading
+        mainStack.spacing = 12
         
         let groups = StatusBarUI.groupModels(models)
         
-        for group in groups {
-            let containerBox = NSBox()
-            containerBox.boxType = .custom
-            containerBox.borderWidth = 1.5
-            
-            let isGemini = group.name == "Gemini"
-            let accentColor = isGemini ? NSColor.systemIndigo : NSColor.systemPurple
-            let pctColor = StatusBarUI.colorForPercentage(group.pct)
-            
-            containerBox.borderColor = accentColor.withAlphaComponent(0.2)
-            containerBox.cornerRadius = 16
-            containerBox.fillColor = accentColor.withAlphaComponent(0.06)
-            
-            let hStack = NSStackView()
-            hStack.orientation = .horizontal
-            hStack.alignment = .centerY
-            hStack.spacing = 12
-            
-            // Left side: Icon + Title + Time Remaining
-            let leftVStack = NSStackView()
-            leftVStack.orientation = .vertical
-            leftVStack.alignment = .leading
-            leftVStack.spacing = 4
-            
-            let titleHStack = NSStackView()
-            titleHStack.orientation = .horizontal
-            titleHStack.alignment = .centerY
-            titleHStack.spacing = 6
-            
-            let iconName = isGemini ? "sparkles" : "brain"
-            let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
-            let iconImg = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)?.withSymbolConfiguration(config)
-            let iconView = NSImageView(image: iconImg ?? NSImage())
-            iconView.contentTintColor = accentColor
-            
-            let titleLabel = createLabel(NSAttributedString(string: group.name, attributes: [
-                .font: NSFont.systemFont(ofSize: 14, weight: .bold),
-                .foregroundColor: NSColor.labelColor
-            ]))
-            
-            titleHStack.addArrangedSubview(iconView)
-            titleHStack.addArrangedSubview(titleLabel)
-            
-            let h = Int(group.secsLeft) / 3600
-            let m = (Int(group.secsLeft) % 3600) / 60
-            let timeStr = "Resets in \(h)h \(m)m"
-            let timeLabel = createLabel(NSAttributedString(string: timeStr, attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                .foregroundColor: NSColor.secondaryLabelColor
-            ]))
-            
-            leftVStack.addArrangedSubview(titleHStack)
-            leftVStack.addArrangedSubview(timeLabel)
-            
-            // Right side: Percentage + Progress Bar
-            let rightVStack = NSStackView()
-            rightVStack.orientation = .vertical
-            rightVStack.alignment = .trailing
-            rightVStack.spacing = 6
-            
-            let pctLabel = createLabel(NSAttributedString(string: "\(group.pct)%", attributes: [
-                .font: NSFont.systemFont(ofSize: 22, weight: .heavy),
-                .foregroundColor: pctColor
-            ]))
-            
-            let progressTrack = NSBox()
-            progressTrack.boxType = .custom
-            progressTrack.borderWidth = 0
-            progressTrack.cornerRadius = 3
-            progressTrack.fillColor = NSColor.labelColor.withAlphaComponent(0.08)
-            progressTrack.translatesAutoresizingMaskIntoConstraints = false
-            progressTrack.heightAnchor.constraint(equalToConstant: 6).isActive = true
-            progressTrack.widthAnchor.constraint(equalToConstant: 60).isActive = true
-            
-            let progressFill = NSBox()
-            progressFill.boxType = .custom
-            progressFill.borderWidth = 0
-            progressFill.cornerRadius = 3
-            progressFill.fillColor = pctColor
-            progressFill.translatesAutoresizingMaskIntoConstraints = false
-            
-            progressTrack.addSubview(progressFill)
-            NSLayoutConstraint.activate([
-                progressFill.leadingAnchor.constraint(equalTo: progressTrack.leadingAnchor),
-                progressFill.topAnchor.constraint(equalTo: progressTrack.topAnchor),
-                progressFill.bottomAnchor.constraint(equalTo: progressTrack.bottomAnchor),
-                progressFill.widthAnchor.constraint(equalTo: progressTrack.widthAnchor, multiplier: CGFloat(max(2, group.pct)) / 100.0)
-            ])
-            
-            rightVStack.addArrangedSubview(pctLabel)
-            rightVStack.addArrangedSubview(progressTrack)
-            
-            let spacer = NSView()
-            spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            
-            hStack.addArrangedSubview(leftVStack)
-            hStack.addArrangedSubview(spacer)
-            hStack.addArrangedSubview(rightVStack)
-            
-            containerBox.contentView = hStack
-            hStack.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                hStack.leadingAnchor.constraint(equalTo: containerBox.leadingAnchor, constant: 16),
-                hStack.trailingAnchor.constraint(equalTo: containerBox.trailingAnchor, constant: -16),
-                hStack.topAnchor.constraint(equalTo: containerBox.topAnchor, constant: 14),
-                hStack.bottomAnchor.constraint(equalTo: containerBox.bottomAnchor, constant: -14)
-            ])
-            
-            stackView.addArrangedSubview(containerBox)
+        var chunkedGroups: [[(name: String, pct: Int, secsLeft: Double)]] = []
+        var currentChunk: [(name: String, pct: Int, secsLeft: Double)] = []
+        for g in groups {
+            currentChunk.append(g)
+            if currentChunk.count == 2 {
+                chunkedGroups.append(currentChunk)
+                currentChunk = []
+            }
+        }
+        if !currentChunk.isEmpty {
+            chunkedGroups.append(currentChunk)
         }
         
-        stackView.translatesAutoresizingMaskIntoConstraints = false
-        stackView.widthAnchor.constraint(equalToConstant: width).isActive = true
-        return stackView
+        for chunk in chunkedGroups {
+            let rowStack = NSStackView()
+            rowStack.orientation = .horizontal
+            rowStack.distribution = .fillEqually
+            rowStack.spacing = 16
+            
+            for group in chunk {
+                let containerBox = NSBox()
+                containerBox.boxType = .custom
+                containerBox.borderWidth = 1.5
+                
+                let isGemini = group.name.hasPrefix("Gemini")
+                let accentColor = isGemini ? NSColor.systemIndigo : NSColor.systemPurple
+                let pctColor = StatusBarUI.colorForPercentage(group.pct)
+                
+                containerBox.borderColor = accentColor.withAlphaComponent(0.2)
+                containerBox.cornerRadius = 16
+                containerBox.fillColor = accentColor.withAlphaComponent(0.06)
+                
+                let hStack = NSStackView()
+                hStack.orientation = .horizontal
+                hStack.alignment = .centerY
+                hStack.spacing = 12
+                
+                // Left side: Icon + Title + Time Remaining
+                let leftVStack = NSStackView()
+                leftVStack.orientation = .vertical
+                leftVStack.alignment = .leading
+                leftVStack.spacing = 4
+                
+                let titleHStack = NSStackView()
+                titleHStack.orientation = .horizontal
+                titleHStack.alignment = .centerY
+                titleHStack.spacing = 6
+                
+                let iconName = isGemini ? "sparkles" : "brain"
+                let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+                let iconImg = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+                let iconView = NSImageView(image: iconImg ?? NSImage())
+                iconView.contentTintColor = accentColor
+                
+                let titleLabel = createLabel(NSAttributedString(string: group.name, attributes: [
+                    .font: NSFont.systemFont(ofSize: 14, weight: .bold),
+                    .foregroundColor: NSColor.labelColor
+                ]))
+                
+                titleHStack.addArrangedSubview(iconView)
+                titleHStack.addArrangedSubview(titleLabel)
+                
+                let h = Int(group.secsLeft) / 3600
+                let m = (Int(group.secsLeft) % 3600) / 60
+                let timeStr = "Resets in \(h)h \(m)m"
+                let timeLabel = createLabel(NSAttributedString(string: timeStr, attributes: [
+                    .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                    .foregroundColor: NSColor.secondaryLabelColor
+                ]))
+                
+                leftVStack.addArrangedSubview(titleHStack)
+                leftVStack.addArrangedSubview(timeLabel)
+                
+                // Right side: Percentage + Progress Bar
+                let rightVStack = NSStackView()
+                rightVStack.orientation = .vertical
+                rightVStack.alignment = .trailing
+                rightVStack.spacing = 6
+                
+                let pctLabel = createLabel(NSAttributedString(string: "\(group.pct)%", attributes: [
+                    .font: NSFont.systemFont(ofSize: 22, weight: .heavy),
+                    .foregroundColor: pctColor
+                ]))
+                
+                let progressTrack = NSBox()
+                progressTrack.boxType = .custom
+                progressTrack.borderWidth = 0
+                progressTrack.cornerRadius = 3
+                progressTrack.fillColor = NSColor.labelColor.withAlphaComponent(0.08)
+                progressTrack.translatesAutoresizingMaskIntoConstraints = false
+                progressTrack.heightAnchor.constraint(equalToConstant: 6).isActive = true
+                progressTrack.widthAnchor.constraint(equalToConstant: 60).isActive = true
+                
+                let progressFill = NSBox()
+                progressFill.boxType = .custom
+                progressFill.borderWidth = 0
+                progressFill.cornerRadius = 3
+                progressFill.fillColor = pctColor
+                progressFill.translatesAutoresizingMaskIntoConstraints = false
+                
+                progressTrack.addSubview(progressFill)
+                NSLayoutConstraint.activate([
+                    progressFill.leadingAnchor.constraint(equalTo: progressTrack.leadingAnchor),
+                    progressFill.topAnchor.constraint(equalTo: progressTrack.topAnchor),
+                    progressFill.bottomAnchor.constraint(equalTo: progressTrack.bottomAnchor),
+                    progressFill.widthAnchor.constraint(equalTo: progressTrack.widthAnchor, multiplier: CGFloat(max(2, group.pct)) / 100.0)
+                ])
+                
+                rightVStack.addArrangedSubview(pctLabel)
+                rightVStack.addArrangedSubview(progressTrack)
+                
+                let spacer = NSView()
+                spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                
+                hStack.addArrangedSubview(leftVStack)
+                hStack.addArrangedSubview(spacer)
+                hStack.addArrangedSubview(rightVStack)
+                
+                containerBox.contentView = hStack
+                hStack.translatesAutoresizingMaskIntoConstraints = false
+                NSLayoutConstraint.activate([
+                    hStack.leadingAnchor.constraint(equalTo: containerBox.leadingAnchor, constant: 16),
+                    hStack.trailingAnchor.constraint(equalTo: containerBox.trailingAnchor, constant: -16),
+                    hStack.topAnchor.constraint(equalTo: containerBox.topAnchor, constant: 14),
+                    hStack.bottomAnchor.constraint(equalTo: containerBox.bottomAnchor, constant: -14)
+                ])
+                
+                rowStack.addArrangedSubview(containerBox)
+            }
+            
+            if chunk.count < 2 {
+                let spacer = NSView()
+                rowStack.addArrangedSubview(spacer)
+            }
+            
+            rowStack.translatesAutoresizingMaskIntoConstraints = false
+            rowStack.widthAnchor.constraint(equalToConstant: width).isActive = true
+            mainStack.addArrangedSubview(rowStack)
+        }
+        
+        mainStack.translatesAutoresizingMaskIntoConstraints = false
+        mainStack.widthAnchor.constraint(equalToConstant: width).isActive = true
+        return mainStack
     }
 
     private func makeModelsHorizontalItem(models: [ModelQuota]) -> NSMenuItem {
@@ -1214,7 +1219,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let stackView = makeModelsHorizontalStack(models: models, width: 526)
         outerStack.addArrangedSubview(stackView)
         
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 550, height: 125))
+        let groupsCount = models.isEmpty ? 0 : StatusBarUI.groupModels(models).count
+        let rowsCount = max(1, Int(ceil(Double(groupsCount) / 2.0)))
+        let extraRows = rowsCount - 1
+        let containerHeight = 125 + CGFloat(extraRows * 74)
+        
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 550, height: containerHeight))
         outerStack.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(outerStack)
         
@@ -1394,7 +1404,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             contentStack.bottomAnchor.constraint(equalTo: containerBox.bottomAnchor, constant: 12)
         ])
         
-        let wrapperView = NSView(frame: NSRect(x: 0, y: 0, width: 550, height: 185))
+        let groupsCount = finalModels.isEmpty ? 0 : StatusBarUI.groupModels(finalModels).count
+        let rowsCount = max(1, Int(ceil(Double(groupsCount) / 2.0)))
+        let extraRows = rowsCount - 1
+        let rowHeight = 185 + CGFloat(extraRows * 74)
+        
+        let wrapperView = NSView(frame: NSRect(x: 0, y: 0, width: 550, height: rowHeight))
         containerBox.translatesAutoresizingMaskIntoConstraints = false
         wrapperView.addSubview(containerBox)
         
