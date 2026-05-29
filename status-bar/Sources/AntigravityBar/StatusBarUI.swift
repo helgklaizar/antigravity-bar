@@ -202,22 +202,12 @@ struct StatusBarUI {
                 result.append((name: "Gemini 3.5", pct: stats.minPct, secsLeft: stats.minSecs))
             }
             
-            // Gemini 3.1 Pro (High)
-            if let stats = getMatching({ $0.label.lowercased().contains("3.1") && $0.label.lowercased().contains("high") }) {
-                result.append((name: "Gemini 3.1 Pro (High)", pct: stats.minPct, secsLeft: stats.minSecs))
-            }
-            
-            // Gemini 3.1 Pro (Low)
-            if let stats = getMatching({ $0.label.lowercased().contains("3.1") && $0.label.lowercased().contains("low") }) {
-                result.append((name: "Gemini 3.1 Pro (Low)", pct: stats.minPct, secsLeft: stats.minSecs))
-            }
-            
-            // Gemini 3.0
+            // Gemini 3.1 Pro
             if let stats = getMatching({ m in
                 let l = m.label.lowercased()
-                return l.contains("3.0") || l.contains("gemini 3 flash") || (l.contains("gemini 3") && !l.contains("3.1") && !l.contains("3.5"))
+                return (l.contains("3.1") || l.contains("pro")) && !l.contains("3.5")
             }) {
-                result.append((name: "Gemini 3.0", pct: stats.minPct, secsLeft: stats.minSecs))
+                result.append((name: "Gemini 3.1 Pro", pct: stats.minPct, secsLeft: stats.minSecs))
             }
             
             // Claude/OSS

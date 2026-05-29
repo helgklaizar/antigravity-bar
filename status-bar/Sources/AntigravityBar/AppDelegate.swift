@@ -265,45 +265,61 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.autoenablesItems = false
         menu.delegate = self
         
-        // 1. Header section "ACTIVE ACCOUNTS & DAEMONS"
+        // 1. Header section — only the ACTIVE account
         let headerItem = NSMenuItem()
-        headerItem.view = makeSectionHeader(iconName: "person.3.fill", title: "ACTIVE ACCOUNTS & DAEMONS")
+        headerItem.view = makeSectionHeader(iconName: "person.fill", title: "ACTIVE ACCOUNT")
         headerItem.isEnabled = false
         menu.addItem(headerItem)
         
-        // 2. Beautiful cards for each discovered account
+        // 2. Card for the currently selected account only
         if discoveredDaemons.isEmpty {
             let emptyItem = NSMenuItem(title: "⏳ No active accounts or daemons", action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
             menu.addItem(emptyItem)
         } else {
-            let sortedEmails = discoveredDaemons.keys.sorted()
-            for email in sortedEmails {
-                if let daemon = discoveredDaemons[email],
-                   let quota = activeQuotas[email] {
-                    let isActive = (email == selectedEmail)
-                    let cardItem = makeAccountCardItem(
-                        email: email,
-                        name: quota.name,
-                        daemon: daemon,
-                        quota: quota,
-                        isActive: isActive
-                    )
-                    menu.addItem(cardItem)
+            let activeEmail = selectedEmail ?? discoveredDaemons.keys.sorted().first
+            if let email = activeEmail,
+               let daemon = discoveredDaemons[email],
+               let quota = activeQuotas[email] {
+                let cardItem = makeAccountCardItem(
+                    email: email,
+                    name: quota.name,
+                    daemon: daemon,
+                    quota: quota,
+                    isActive: true
+                )
+                menu.addItem(cardItem)
+            }
+            
+            // 3. Standby accounts — compact switch rows
+            let standbyEmails = discoveredDaemons.keys.sorted().filter { $0 != activeEmail }
+            if !standbyEmails.isEmpty {
+                menu.addItem(.separator())
+                let switchHeader = NSMenuItem()
+                switchHeader.view = makeSectionHeader(iconName: "person.fill.turn.right", title: "SWITCH ACCOUNT")
+                switchHeader.isEnabled = false
+                menu.addItem(switchHeader)
+                
+                for email in standbyEmails {
+                    let name = activeQuotas[email]?.name ?? email
+                    let title = "\(name)  \u{200A}·\u{200A}  \(email)"
+                    let item = NSMenuItem(title: title, action: #selector(switchAccountClicked(_:)), keyEquivalent: "")
+                    item.representedObject = email
+                    item.target = self
+                    item.isEnabled = true
+                    menu.addItem(item)
                 }
             }
         }
         
         menu.addItem(.separator())
         
-
-        
-        // 8. Top RAM Processes
+        // TOP RAM PROCESSES
         menu.addItem(makeAppsHorizontalItem())
         
         menu.addItem(.separator())
         
-        // 10. Enhanced Quick Actions toolbar (2x4)
+        // Quick Actions toolbar
         menu.addItem(makeHorizontalToolbarItem())
         
         statusItem.menu = menu
@@ -1053,7 +1069,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         TerminalHelper.syncEcosystem(ecosystemDir: EnvPaths.ecosystemDir)
     }
 
-    private func makeModelsHorizontalStack(models: [ModelQuota], width: CGFloat) -> NSStackView {
+    private func makeModelsHorizontalStack(models: [ModelQuota], width: CGFloat) -> NSView {
         let mainStack = NSStackView()
         mainStack.orientation = .vertical
         mainStack.alignment = .leading
@@ -1061,149 +1077,120 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         let groups = StatusBarUI.groupModels(models)
         
-        var chunkedGroups: [[(name: String, pct: Int, secsLeft: Double)]] = []
-        var currentChunk: [(name: String, pct: Int, secsLeft: Double)] = []
-        for g in groups {
-            currentChunk.append(g)
-            if currentChunk.count == 2 {
-                chunkedGroups.append(currentChunk)
-                currentChunk = []
-            }
-        }
-        if !currentChunk.isEmpty {
-            chunkedGroups.append(currentChunk)
+        for group in groups {
+            let isGemini = group.name.lowercased().contains("gemini") || group.name.lowercased().contains("flash") || group.name.lowercased().contains("pro")
+            let accentColor = isGemini ? NSColor.systemIndigo : NSColor.systemPurple
+            let pctColor = StatusBarUI.colorForPercentage(group.pct)
+            
+            let hStack = NSStackView()
+            hStack.orientation = .horizontal
+            hStack.alignment = .centerY
+            hStack.spacing = 12
+            
+            // Left side: Icon + Title + Time Remaining
+            let leftVStack = NSStackView()
+            leftVStack.orientation = .vertical
+            leftVStack.alignment = .leading
+            leftVStack.spacing = 2
+            
+            let titleHStack = NSStackView()
+            titleHStack.orientation = .horizontal
+            titleHStack.alignment = .centerY
+            titleHStack.spacing = 6
+            
+            let iconName = isGemini ? "sparkles" : "brain"
+            let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+            let iconImg = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+            let iconView = NSImageView(image: iconImg ?? NSImage())
+            iconView.contentTintColor = accentColor
+            
+            let titleLabel = createLabel(NSAttributedString(string: group.name, attributes: [
+                .font: NSFont.systemFont(ofSize: 12, weight: .bold),
+                .foregroundColor: NSColor.labelColor
+            ]))
+            
+            titleHStack.addArrangedSubview(iconView)
+            titleHStack.addArrangedSubview(titleLabel)
+            
+            let h = Int(group.secsLeft) / 3600
+            let m = (Int(group.secsLeft) % 3600) / 60
+            let timeStr = "Resets in \(h)h \(m)m"
+            let timeLabel = createLabel(NSAttributedString(string: timeStr, attributes: [
+                .font: NSFont.systemFont(ofSize: 10, weight: .medium),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]))
+            
+            leftVStack.addArrangedSubview(titleHStack)
+            leftVStack.addArrangedSubview(timeLabel)
+            
+            // Right side: Percentage + Progress Bar
+            let rightVStack = NSStackView()
+            rightVStack.orientation = .horizontal
+            rightVStack.alignment = .centerY
+            rightVStack.spacing = 10
+            
+            let progressTrack = NSBox()
+            progressTrack.boxType = .custom
+            progressTrack.borderWidth = 0
+            progressTrack.cornerRadius = 3
+            progressTrack.fillColor = NSColor.labelColor.withAlphaComponent(0.08)
+            progressTrack.translatesAutoresizingMaskIntoConstraints = false
+            progressTrack.heightAnchor.constraint(equalToConstant: 6).isActive = true
+            progressTrack.widthAnchor.constraint(equalToConstant: 80).isActive = true
+            
+            let progressFill = NSBox()
+            progressFill.boxType = .custom
+            progressFill.borderWidth = 0
+            progressFill.cornerRadius = 3
+            progressFill.fillColor = pctColor
+            progressFill.translatesAutoresizingMaskIntoConstraints = false
+            
+            progressTrack.addSubview(progressFill)
+            NSLayoutConstraint.activate([
+                progressFill.leadingAnchor.constraint(equalTo: progressTrack.leadingAnchor),
+                progressFill.topAnchor.constraint(equalTo: progressTrack.topAnchor),
+                progressFill.bottomAnchor.constraint(equalTo: progressTrack.bottomAnchor),
+                progressFill.widthAnchor.constraint(equalTo: progressTrack.widthAnchor, multiplier: CGFloat(max(2, group.pct)) / 100.0)
+            ])
+            
+            let pctLabel = createLabel(NSAttributedString(string: "\(group.pct)%", attributes: [
+                .font: NSFont.systemFont(ofSize: 14, weight: .heavy),
+                .foregroundColor: pctColor
+            ]))
+            
+            rightVStack.addArrangedSubview(progressTrack)
+            rightVStack.addArrangedSubview(pctLabel)
+            
+            let spacer = NSView()
+            spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            
+            hStack.addArrangedSubview(leftVStack)
+            hStack.addArrangedSubview(spacer)
+            hStack.addArrangedSubview(rightVStack)
+            
+            hStack.translatesAutoresizingMaskIntoConstraints = false
+            hStack.widthAnchor.constraint(equalToConstant: width - 28).isActive = true
+            mainStack.addArrangedSubview(hStack)
         }
         
-        for chunk in chunkedGroups {
-            let rowStack = NSStackView()
-            rowStack.orientation = .horizontal
-            rowStack.distribution = .fillEqually
-            rowStack.spacing = 16
-            
-            for group in chunk {
-                let containerBox = NSBox()
-                containerBox.boxType = .custom
-                containerBox.borderWidth = 1.5
-                
-                let isGemini = group.name.hasPrefix("Gemini")
-                let accentColor = isGemini ? NSColor.systemIndigo : NSColor.systemPurple
-                let pctColor = StatusBarUI.colorForPercentage(group.pct)
-                
-                containerBox.borderColor = accentColor.withAlphaComponent(0.2)
-                containerBox.cornerRadius = 16
-                containerBox.fillColor = accentColor.withAlphaComponent(0.06)
-                
-                let hStack = NSStackView()
-                hStack.orientation = .horizontal
-                hStack.alignment = .centerY
-                hStack.spacing = 12
-                
-                // Left side: Icon + Title + Time Remaining
-                let leftVStack = NSStackView()
-                leftVStack.orientation = .vertical
-                leftVStack.alignment = .leading
-                leftVStack.spacing = 4
-                
-                let titleHStack = NSStackView()
-                titleHStack.orientation = .horizontal
-                titleHStack.alignment = .centerY
-                titleHStack.spacing = 6
-                
-                let iconName = isGemini ? "sparkles" : "brain"
-                let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
-                let iconImg = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)?.withSymbolConfiguration(config)
-                let iconView = NSImageView(image: iconImg ?? NSImage())
-                iconView.contentTintColor = accentColor
-                
-                let titleLabel = createLabel(NSAttributedString(string: group.name, attributes: [
-                    .font: NSFont.systemFont(ofSize: 14, weight: .bold),
-                    .foregroundColor: NSColor.labelColor
-                ]))
-                
-                titleHStack.addArrangedSubview(iconView)
-                titleHStack.addArrangedSubview(titleLabel)
-                
-                let h = Int(group.secsLeft) / 3600
-                let m = (Int(group.secsLeft) % 3600) / 60
-                let timeStr = "Resets in \(h)h \(m)m"
-                let timeLabel = createLabel(NSAttributedString(string: timeStr, attributes: [
-                    .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                    .foregroundColor: NSColor.secondaryLabelColor
-                ]))
-                
-                leftVStack.addArrangedSubview(titleHStack)
-                leftVStack.addArrangedSubview(timeLabel)
-                
-                // Right side: Percentage + Progress Bar
-                let rightVStack = NSStackView()
-                rightVStack.orientation = .vertical
-                rightVStack.alignment = .trailing
-                rightVStack.spacing = 6
-                
-                let pctLabel = createLabel(NSAttributedString(string: "\(group.pct)%", attributes: [
-                    .font: NSFont.systemFont(ofSize: 22, weight: .heavy),
-                    .foregroundColor: pctColor
-                ]))
-                
-                let progressTrack = NSBox()
-                progressTrack.boxType = .custom
-                progressTrack.borderWidth = 0
-                progressTrack.cornerRadius = 3
-                progressTrack.fillColor = NSColor.labelColor.withAlphaComponent(0.08)
-                progressTrack.translatesAutoresizingMaskIntoConstraints = false
-                progressTrack.heightAnchor.constraint(equalToConstant: 6).isActive = true
-                progressTrack.widthAnchor.constraint(equalToConstant: 60).isActive = true
-                
-                let progressFill = NSBox()
-                progressFill.boxType = .custom
-                progressFill.borderWidth = 0
-                progressFill.cornerRadius = 3
-                progressFill.fillColor = pctColor
-                progressFill.translatesAutoresizingMaskIntoConstraints = false
-                
-                progressTrack.addSubview(progressFill)
-                NSLayoutConstraint.activate([
-                    progressFill.leadingAnchor.constraint(equalTo: progressTrack.leadingAnchor),
-                    progressFill.topAnchor.constraint(equalTo: progressTrack.topAnchor),
-                    progressFill.bottomAnchor.constraint(equalTo: progressTrack.bottomAnchor),
-                    progressFill.widthAnchor.constraint(equalTo: progressTrack.widthAnchor, multiplier: CGFloat(max(2, group.pct)) / 100.0)
-                ])
-                
-                rightVStack.addArrangedSubview(pctLabel)
-                rightVStack.addArrangedSubview(progressTrack)
-                
-                let spacer = NSView()
-                spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-                
-                hStack.addArrangedSubview(leftVStack)
-                hStack.addArrangedSubview(spacer)
-                hStack.addArrangedSubview(rightVStack)
-                
-                containerBox.contentView = hStack
-                hStack.translatesAutoresizingMaskIntoConstraints = false
-                NSLayoutConstraint.activate([
-                    hStack.leadingAnchor.constraint(equalTo: containerBox.leadingAnchor, constant: 16),
-                    hStack.trailingAnchor.constraint(equalTo: containerBox.trailingAnchor, constant: -16),
-                    hStack.topAnchor.constraint(equalTo: containerBox.topAnchor, constant: 14),
-                    hStack.bottomAnchor.constraint(equalTo: containerBox.bottomAnchor, constant: -14)
-                ])
-                
-                rowStack.addArrangedSubview(containerBox)
-            }
-            
-            if chunk.count < 2 {
-                let spacer = NSView()
-                rowStack.addArrangedSubview(spacer)
-            }
-            
-            rowStack.translatesAutoresizingMaskIntoConstraints = false
-            rowStack.widthAnchor.constraint(equalToConstant: width).isActive = true
-            mainStack.addArrangedSubview(rowStack)
-        }
+        let containerBox = NSBox()
+        containerBox.boxType = .custom
+        containerBox.borderWidth = 1.0
+        containerBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.2)
+        containerBox.cornerRadius = 12
+        containerBox.fillColor = NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.1)
         
         mainStack.translatesAutoresizingMaskIntoConstraints = false
-        mainStack.widthAnchor.constraint(equalToConstant: width).isActive = true
-        return mainStack
+        containerBox.contentView = mainStack
+        
+        NSLayoutConstraint.activate([
+            mainStack.leadingAnchor.constraint(equalTo: containerBox.leadingAnchor, constant: 14),
+            mainStack.trailingAnchor.constraint(equalTo: containerBox.trailingAnchor, constant: -14),
+            mainStack.topAnchor.constraint(equalTo: containerBox.topAnchor, constant: 10),
+            mainStack.bottomAnchor.constraint(equalTo: containerBox.bottomAnchor, constant: -10)
+        ])
+        
+        return containerBox
     }
 
     private func makeModelsHorizontalItem(models: [ModelQuota]) -> NSMenuItem {
@@ -1220,9 +1207,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         outerStack.addArrangedSubview(stackView)
         
         let groupsCount = models.isEmpty ? 0 : StatusBarUI.groupModels(models).count
-        let rowsCount = max(1, Int(ceil(Double(groupsCount) / 2.0)))
-        let extraRows = rowsCount - 1
-        let containerHeight = 125 + CGFloat(extraRows * 74)
+        let quotaStackHeight = CGFloat(groupsCount * 30 + max(0, groupsCount - 1) * 12 + 20)
+        let containerHeight = 45 + quotaStackHeight
         
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 550, height: containerHeight))
         outerStack.translatesAutoresizingMaskIntoConstraints = false
@@ -1401,13 +1387,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             contentStack.leadingAnchor.constraint(equalTo: containerBox.leadingAnchor, constant: 12),
             contentStack.trailingAnchor.constraint(equalTo: containerBox.trailingAnchor, constant: -12),
             contentStack.topAnchor.constraint(equalTo: containerBox.topAnchor, constant: 12),
-            contentStack.bottomAnchor.constraint(equalTo: containerBox.bottomAnchor, constant: 12)
+            contentStack.bottomAnchor.constraint(equalTo: containerBox.bottomAnchor, constant: -12)
         ])
         
         let groupsCount = finalModels.isEmpty ? 0 : StatusBarUI.groupModels(finalModels).count
-        let rowsCount = max(1, Int(ceil(Double(groupsCount) / 2.0)))
-        let extraRows = rowsCount - 1
-        let rowHeight = 185 + CGFloat(extraRows * 74)
+        let quotaStackHeight = CGFloat(groupsCount * 30 + max(0, groupsCount - 1) * 12 + 20)
+        let rowHeight = 112 + quotaStackHeight
         
         let wrapperView = NSView(frame: NSRect(x: 0, y: 0, width: 550, height: rowHeight))
         containerBox.translatesAutoresizingMaskIntoConstraints = false
@@ -1465,6 +1450,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         default:
             break
         }
+    }
+
+    @objc private func switchAccountClicked(_ sender: NSMenuItem) {
+        guard let email = sender.representedObject as? String else { return }
+        statusItem.menu?.cancelTracking()
+        self.selectedEmail = email
+        fetchAndUpdate()
     }
 
     // MARK: - Actions

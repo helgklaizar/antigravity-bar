@@ -1,0 +1,7 @@
+excluded:
+  - status-bar/.build
+  - status-bar/.build/
+  - .build
+  - .build/
+  - .python-doctor
+  - .python-doctor/

@@ -18,3 +18,8 @@ status-bar/Stellar Bar.app
 
 # Log files
 *.log
+
+# Environment variables
+.env
+.env.*
+

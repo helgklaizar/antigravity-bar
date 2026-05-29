@@ -139,23 +139,15 @@ final class AntigravityBarTests: XCTestCase {
         
         // 2. Test Popover grouping (isMenuBar: false)
         let popoverGroups = StatusBarUI.groupModels(models, isMenuBar: false)
-        XCTAssertEqual(popoverGroups.count, 5)
+        XCTAssertEqual(popoverGroups.count, 3)
         
         let g35 = popoverGroups.first { $0.name == "Gemini 3.5" }
         XCTAssertNotNil(g35)
         XCTAssertEqual(g35?.pct, 50)
         
-        let g31High = popoverGroups.first { $0.name == "Gemini 3.1 Pro (High)" }
-        XCTAssertNotNil(g31High)
-        XCTAssertEqual(g31High?.pct, 40)
-        
-        let g31Low = popoverGroups.first { $0.name == "Gemini 3.1 Pro (Low)" }
-        XCTAssertNotNil(g31Low)
-        XCTAssertEqual(g31Low?.pct, 90)
-        
-        let g30 = popoverGroups.first { $0.name == "Gemini 3.0" }
-        XCTAssertNotNil(g30)
-        XCTAssertEqual(g30?.pct, 100)
+        let g31 = popoverGroups.first { $0.name == "Gemini 3.1 Pro" }
+        XCTAssertNotNil(g31)
+        XCTAssertEqual(g31?.pct, 40)
         
         let claudeOSS = popoverGroups.first { $0.name == "Claude/OSS" }
         XCTAssertNotNil(claudeOSS)

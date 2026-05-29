@@ -1,0 +1,14 @@
+{
+  "version": "2026.5.11",
+  "timestamp": "2026-05-28T23:10:01Z",
+  "score": 96,
+  "categories": {
+    "security": 25,
+    "lint": 20,
+    "complexity": 15,
+    "structure": 6,
+    "imports": 5,
+    "exceptions": 10,
+    "zen": 15
+  }
+}

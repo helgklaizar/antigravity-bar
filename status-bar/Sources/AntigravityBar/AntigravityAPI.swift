@@ -115,10 +115,11 @@ class AntigravityAPI: @unchecked Sendable {
         let brain = self.brainDir
         let conversations = self.conversationsDir
         let htmlArts = self.htmlArtsDir
+        let implicit = self.implicitDir
         
         DispatchQueue.global(qos: .background).async { [weak self] in
             guard let self = self else { return }
-            let total = self.dirSize(brain) + self.dirSize(conversations) + self.dirSize(htmlArts)
+            let total = self.dirSize(brain) + self.dirSize(conversations) + self.dirSize(htmlArts) + self.dirSize(implicit)
             let formatted = self.formatDirSize(total)
             let mb = Double(total) / (1024 * 1024)
             DispatchQueue.main.async {
@@ -131,6 +132,7 @@ class AntigravityAPI: @unchecked Sendable {
     var conversationsDir: URL { baseDir.appendingPathComponent("conversations") }
     var browserRecDir: URL { baseDir.appendingPathComponent("browser_recordings") }
     var htmlArtsDir: URL { baseDir.appendingPathComponent("html_artifacts") }
+    var implicitDir: URL { baseDir.appendingPathComponent("implicit") }
     var knowledgeDir: URL { baseDir.appendingPathComponent("knowledge") }
     var skillsDir: URL { baseDir.appendingPathComponent("skills") }
     var workflowsDir: URL { baseDir.appendingPathComponent("global_workflows") }
@@ -381,7 +383,7 @@ class AntigravityAPI: @unchecked Sendable {
     // MARK: - Actions
 
     func clearCache() {
-        let dirsToClear = [brainDir, conversationsDir, htmlArtsDir]
+        let dirsToClear = [brainDir, conversationsDir, htmlArtsDir, implicitDir]
         for dir in dirsToClear {
             guard let contents = try? env.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil, options: []) else { continue }
             for item in contents {
