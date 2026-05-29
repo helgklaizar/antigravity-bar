@@ -35,6 +35,59 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         get { UserDefaults.standard.string(forKey: "SelectedEmail") }
         set { UserDefaults.standard.set(newValue, forKey: "SelectedEmail") }
     }
+    private var savedQuotas: [String: QuotaData] {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: "SavedQuotasData"),
+                  let decoded = try? JSONDecoder().decode([String: QuotaData].self, from: data) else {
+                return [:]
+            }
+            return decoded
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: "SavedQuotasData")
+            }
+        }
+    }
+    
+    private func extrapolateQuota(_ quota: QuotaData) -> QuotaData {
+        let elapsed = Date().timeIntervalSince(quota.timestamp)
+        let updatedModels = quota.models.map { model -> ModelQuota in
+            let remainingSecs = max(0, model.secondsUntilReset - elapsed)
+            let isReset = remainingSecs <= 0
+            let pct = isReset ? 100.0 : model.remainingPercentage
+            let exhausted = isReset ? false : model.isExhausted
+            let timeStr = formatRemainingTime(remainingSecs)
+            return ModelQuota(
+                label: model.label,
+                remainingPercentage: pct,
+                isExhausted: exhausted,
+                timeUntilReset: timeStr,
+                secondsUntilReset: remainingSecs
+            )
+        }
+        return QuotaData(
+            email: quota.email,
+            name: quota.name,
+            models: updatedModels,
+            timestamp: Date(),
+            credits: quota.credits
+        )
+    }
+
+    private func formatRemainingTime(_ seconds: Double) -> String {
+        if seconds <= 0 { return "Ready" }
+        let minutes = Int(ceil(seconds / 60.0))
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        if hours >= 24 {
+            let days = hours / 24
+            let rem = hours % 24
+            return "\(days)d \(rem)h"
+        }
+        return "\(hours)h \(minutes % 60)m"
+    }
+
     private var lastExhaustedModels: Set<String> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -113,14 +166,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.daemonOnline = false
                 self.activeQuotas = [:]
                 self.discoveredDaemons = [:]
-                self.lastQuota = nil
+                
+                var activeQ: QuotaData? = nil
+                if let target = self.selectedEmail, let sq = self.savedQuotas[target] {
+                    activeQ = self.extrapolateQuota(sq)
+                } else if let firstKey = self.savedQuotas.keys.sorted().first, let sq = self.savedQuotas[firstKey] {
+                    activeQ = self.extrapolateQuota(sq)
+                    self.selectedEmail = firstKey
+                }
+                
+                self.lastQuota = activeQ
                 
                 let home = NSHomeDirectory()
                 let ideDir = URL(fileURLWithPath: home).appendingPathComponent(".gemini/antigravity-ide")
                 let baseDirName = FileManager.default.fileExists(atPath: ideDir.path) ? "antigravity-ide" : "antigravity"
                 self.api.baseDir = URL(fileURLWithPath: home).appendingPathComponent(".gemini/\(baseDirName)")
                 
-                self.updateBarTitle(models: [], cpu: cpu, gpu: gpu, ram: ram)
+                self.updateBarTitle(models: activeQ?.models ?? [], cpu: cpu, gpu: gpu, ram: ram)
                 self.isFetching = false
                 self.scheduleNextPoll()
                 return
@@ -151,18 +213,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.activeQuotas = newQuotas
             self.discoveredDaemons = newDaemons
             
+            // Merge online quotas into our savedQuotas cache
+            var updatedSaved = self.savedQuotas
+            for (email, quota) in newQuotas {
+                updatedSaved[email] = quota
+            }
+            self.savedQuotas = updatedSaved
+            
             let targetEmail = self.selectedEmail
             var activeQ: QuotaData? = nil
             
-            if let target = targetEmail, let q = newQuotas[target] {
-                activeQ = q
-            } else if let firstKey = newQuotas.keys.sorted().first {
+            if let target = targetEmail {
+                if let q = newQuotas[target] {
+                    activeQ = q
+                } else if let sq = updatedSaved[target] {
+                    activeQ = self.extrapolateQuota(sq)
+                }
+            }
+            
+            if activeQ == nil, let firstKey = newQuotas.keys.sorted().first {
                 activeQ = newQuotas[firstKey]
                 self.selectedEmail = firstKey
             }
             
             self.lastQuota = activeQ
-            self.daemonOnline = activeQ != nil
+            if let email = self.selectedEmail {
+                self.daemonOnline = newDaemons[email] != nil
+            } else {
+                self.daemonOnline = false
+            }
             
             if let email = self.selectedEmail, let daemon = newDaemons[email] {
                 let isVersion2 = daemon.path.contains("Antigravity IDE") || daemon.path.contains("language_server_macos")
@@ -272,43 +351,95 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(headerItem)
         
         // 2. Card for the currently selected account only
-        if discoveredDaemons.isEmpty {
+        let activeEmail = selectedEmail ?? discoveredDaemons.keys.sorted().first ?? savedQuotas.keys.sorted().first
+        
+        if let email = activeEmail {
+            let daemon = discoveredDaemons[email]
+            var quota: QuotaData? = nil
+            if let q = activeQuotas[email] {
+                quota = q
+            } else if let sq = savedQuotas[email] {
+                quota = extrapolateQuota(sq)
+            }
+            
+            if let q = quota {
+                let cardItem = makeAccountCardItem(
+                    email: email,
+                    name: q.name,
+                    daemon: daemon,
+                    quota: q,
+                    isActive: daemon != nil
+                )
+                menu.addItem(cardItem)
+            } else {
+                let emptyItem = NSMenuItem(title: "⏳ No quota data found for \(email)", action: nil, keyEquivalent: "")
+                emptyItem.isEnabled = false
+                menu.addItem(emptyItem)
+            }
+        } else {
             let emptyItem = NSMenuItem(title: "⏳ No active accounts or daemons", action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
             menu.addItem(emptyItem)
-        } else {
-            let activeEmail = selectedEmail ?? discoveredDaemons.keys.sorted().first
-            if let email = activeEmail,
-               let daemon = discoveredDaemons[email],
-               let quota = activeQuotas[email] {
-                let cardItem = makeAccountCardItem(
-                    email: email,
-                    name: quota.name,
-                    daemon: daemon,
-                    quota: quota,
-                    isActive: true
-                )
-                menu.addItem(cardItem)
-            }
+        }
+        
+        // 3. Switch accounts section (both online standby and offline)
+        var allEmails = Set<String>()
+        for k in discoveredDaemons.keys { allEmails.insert(k) }
+        for k in savedQuotas.keys { allEmails.insert(k) }
+        
+        let standbyEmails = allEmails.sorted().filter { $0 != activeEmail }
+        
+        if !standbyEmails.isEmpty {
+            menu.addItem(.separator())
+            let switchHeader = NSMenuItem()
+            switchHeader.view = makeSectionHeader(iconName: "person.fill.turn.right", title: "SWITCH ACCOUNT")
+            switchHeader.isEnabled = false
+            menu.addItem(switchHeader)
             
-            // 3. Standby accounts — compact switch rows
-            let standbyEmails = discoveredDaemons.keys.sorted().filter { $0 != activeEmail }
-            if !standbyEmails.isEmpty {
-                menu.addItem(.separator())
-                let switchHeader = NSMenuItem()
-                switchHeader.view = makeSectionHeader(iconName: "person.fill.turn.right", title: "SWITCH ACCOUNT")
-                switchHeader.isEnabled = false
-                menu.addItem(switchHeader)
+            for email in standbyEmails {
+                let isOnline = discoveredDaemons[email] != nil
                 
-                for email in standbyEmails {
-                    let name = activeQuotas[email]?.name ?? email
-                    let title = "\(name)  \u{200A}·\u{200A}  \(email)"
-                    let item = NSMenuItem(title: title, action: #selector(switchAccountClicked(_:)), keyEquivalent: "")
-                    item.representedObject = email
-                    item.target = self
-                    item.isEnabled = true
-                    menu.addItem(item)
+                var quota: QuotaData? = nil
+                if let q = activeQuotas[email] {
+                    quota = q
+                } else if let sq = savedQuotas[email] {
+                    quota = extrapolateQuota(sq)
                 }
+                
+                let name = quota?.name ?? email
+                var title = "\(name)  \u{200A}·\u{200A}  \(email)"
+                
+                if let q = quota {
+                    let countdowns = q.models.filter { $0.secondsUntilReset > 0 && $0.isExhausted }
+                    if !countdowns.isEmpty {
+                        if let maxModel = countdowns.max(by: { $0.secondsUntilReset < $1.secondsUntilReset }) {
+                            let timerStr = maxModel.timeUntilReset
+                            let shortName = maxModel.label.replacingOccurrences(of: "Claude 3.5 ", with: "")
+                                                          .replacingOccurrences(of: "Gemini 3.5 ", with: "")
+                                                          .replacingOccurrences(of: "Gemini 1.5 ", with: "")
+                            title += "   (⏱ \(timerStr) · \(shortName))"
+                        }
+                    }
+                }
+                
+                if !isOnline {
+                    title += "   [offline]"
+                }
+                
+                let item = NSMenuItem(title: title, action: #selector(switchAccountClicked(_:)), keyEquivalent: "")
+                item.representedObject = email
+                item.target = self
+                item.isEnabled = true
+                
+                if !isOnline {
+                    let attrTitle = NSMutableAttributedString(string: title, attributes: [
+                        .foregroundColor: NSColor.secondaryLabelColor,
+                        .font: NSFont.systemFont(ofSize: 12)
+                    ])
+                    item.attributedTitle = attrTitle
+                }
+                
+                menu.addItem(item)
             }
         }
         
@@ -1225,15 +1356,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
-    private func makeAccountCardItem(email: String, name: String?, daemon: DaemonInfo, quota: QuotaData, isActive: Bool) -> NSMenuItem {
+    private func makeAccountCardItem(email: String, name: String?, daemon: DaemonInfo?, quota: QuotaData, isActive: Bool) -> NSMenuItem {
         let item = NSMenuItem()
         
         let containerBox = NSBox()
         containerBox.boxType = .custom
+        
+        let isOnline = daemon != nil
         containerBox.borderWidth = isActive ? 1.5 : 1
-        containerBox.borderColor = isActive ? NSColor.systemBlue.withAlphaComponent(0.8) : NSColor.separatorColor.withAlphaComponent(0.2)
+        containerBox.borderColor = isOnline ? (isActive ? NSColor.systemBlue.withAlphaComponent(0.8) : NSColor.separatorColor.withAlphaComponent(0.2)) : NSColor.systemRed.withAlphaComponent(0.4)
+        containerBox.fillColor = isOnline ? (isActive ? NSColor.systemBlue.withAlphaComponent(0.06) : NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.15)) : NSColor.systemRed.withAlphaComponent(0.02)
         containerBox.cornerRadius = 14
-        containerBox.fillColor = isActive ? NSColor.systemBlue.withAlphaComponent(0.06) : NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.15)
         
         let contentStack = NSStackView()
         contentStack.orientation = .vertical
@@ -1268,10 +1401,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pillBox.boxType = .custom
         pillBox.borderWidth = 0
         pillBox.cornerRadius = 6
-        pillBox.fillColor = isActive ? NSColor.systemGreen.withAlphaComponent(0.15) : NSColor.tertiaryLabelColor.withAlphaComponent(0.15)
         
-        let pillText = isActive ? "ACTIVE" : "STANDBY"
-        let pillColor = isActive ? NSColor.systemGreen : NSColor.secondaryLabelColor
+        let pillText = isOnline ? (isActive ? "ACTIVE" : "STANDBY") : "OFFLINE"
+        let pillColor = isOnline ? (isActive ? NSColor.systemGreen : NSColor.secondaryLabelColor) : NSColor.systemRed
+        let pillBgColor = isOnline ? (isActive ? NSColor.systemGreen.withAlphaComponent(0.15) : NSColor.tertiaryLabelColor.withAlphaComponent(0.15)) : NSColor.systemRed.withAlphaComponent(0.15)
+        
+        pillBox.fillColor = pillBgColor
+        
         let pillLabel = createLabel(NSAttributedString(string: pillText, attributes: [
             .font: NSFont.systemFont(ofSize: 9, weight: .bold),
             .foregroundColor: pillColor
@@ -1297,81 +1433,85 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         bottomRow.alignment = .centerY
         bottomRow.distribution = .gravityAreas
         
-        let metaLabel = createLabel(NSAttributedString(string: "PID: \(daemon.pid)  •  Port: \(daemon.httpPort)", attributes: [
+        let metaText = daemon.map { "PID: \($0.pid)  •  Port: \($0.httpPort)" } ?? "OFFLINE · No active process"
+        let metaLabel = createLabel(NSAttributedString(string: metaText, attributes: [
             .font: NSFont.monospacedSystemFont(ofSize: 9, weight: .medium),
             .foregroundColor: NSColor.tertiaryLabelColor
         ]))
         
-        let actionsStack = NSStackView()
-        actionsStack.orientation = .horizontal
-        actionsStack.spacing = 8
-        
-        func createActionButton(title: String, type: String, color: NSColor) -> NSView {
-            let btnBox = NSBox()
-            btnBox.boxType = .custom
-            btnBox.borderWidth = 0
-            btnBox.cornerRadius = 6
-            btnBox.fillColor = color.withAlphaComponent(0.12)
-            
-            let btnLbl = createLabel(NSAttributedString(string: title, attributes: [
-                .font: NSFont.systemFont(ofSize: 10, weight: .bold),
-                .foregroundColor: color
-            ]))
-            btnBox.contentView = btnLbl
-            
-            btnLbl.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                btnLbl.leadingAnchor.constraint(equalTo: btnBox.leadingAnchor, constant: 8),
-                btnLbl.trailingAnchor.constraint(equalTo: btnBox.trailingAnchor, constant: -8),
-                btnLbl.topAnchor.constraint(equalTo: btnBox.topAnchor, constant: 4),
-                btnLbl.bottomAnchor.constraint(equalTo: btnBox.bottomAnchor, constant: -4)
-            ])
-            
-            let button = DaemonActionButton()
-            button.email = email
-            button.port = daemon.httpPort
-            button.pid = daemon.pid
-            button.actionType = type
-            button.isBordered = false
-            button.isTransparent = true
-            button.target = self
-            button.action = #selector(daemonActionClicked(_:))
-            
-            let wrapper = NSView()
-            btnBox.translatesAutoresizingMaskIntoConstraints = false
-            button.translatesAutoresizingMaskIntoConstraints = false
-            wrapper.addSubview(btnBox)
-            wrapper.addSubview(button)
-            
-            NSLayoutConstraint.activate([
-                btnBox.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-                btnBox.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-                btnBox.topAnchor.constraint(equalTo: wrapper.topAnchor),
-                btnBox.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
-                
-                button.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-                button.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-                button.topAnchor.constraint(equalTo: wrapper.topAnchor),
-                button.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
-                
-                wrapper.heightAnchor.constraint(equalToConstant: 20)
-            ])
-            
-            return wrapper
-        }
-        
-        if !isActive {
-            let activateBtn = createActionButton(title: "Activate", type: "select", color: .systemBlue)
-            actionsStack.addArrangedSubview(activateBtn)
-        }
-        
-        let webBtn = createActionButton(title: "Web UI", type: "webui", color: .systemPurple)
-        let stopBtn = createActionButton(title: "Stop", type: "stop", color: .systemRed)
-        actionsStack.addArrangedSubview(webBtn)
-        actionsStack.addArrangedSubview(stopBtn)
-        
         bottomRow.addView(metaLabel, in: .leading)
-        bottomRow.addView(actionsStack, in: .trailing)
+        
+        if let actualDaemon = daemon {
+            let actionsStack = NSStackView()
+            actionsStack.orientation = .horizontal
+            actionsStack.spacing = 8
+            
+            func createActionButton(title: String, type: String, color: NSColor) -> NSView {
+                let btnBox = NSBox()
+                btnBox.boxType = .custom
+                btnBox.borderWidth = 0
+                btnBox.cornerRadius = 6
+                btnBox.fillColor = color.withAlphaComponent(0.12)
+                
+                let btnLbl = createLabel(NSAttributedString(string: title, attributes: [
+                    .font: NSFont.systemFont(ofSize: 10, weight: .bold),
+                    .foregroundColor: color
+                ]))
+                btnBox.contentView = btnLbl
+                
+                btnLbl.translatesAutoresizingMaskIntoConstraints = false
+                NSLayoutConstraint.activate([
+                    btnLbl.leadingAnchor.constraint(equalTo: btnBox.leadingAnchor, constant: 8),
+                    btnLbl.trailingAnchor.constraint(equalTo: btnBox.trailingAnchor, constant: -8),
+                    btnLbl.topAnchor.constraint(equalTo: btnBox.topAnchor, constant: 4),
+                    btnLbl.bottomAnchor.constraint(equalTo: btnBox.bottomAnchor, constant: -4)
+                ])
+                
+                let button = DaemonActionButton()
+                button.email = email
+                button.port = actualDaemon.httpPort
+                button.pid = actualDaemon.pid
+                button.actionType = type
+                button.isBordered = false
+                button.isTransparent = true
+                button.target = self
+                button.action = #selector(daemonActionClicked(_:))
+                
+                let wrapper = NSView()
+                btnBox.translatesAutoresizingMaskIntoConstraints = false
+                button.translatesAutoresizingMaskIntoConstraints = false
+                wrapper.addSubview(btnBox)
+                wrapper.addSubview(button)
+                
+                NSLayoutConstraint.activate([
+                    btnBox.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+                    btnBox.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+                    btnBox.topAnchor.constraint(equalTo: wrapper.topAnchor),
+                    btnBox.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+                    
+                    button.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+                    button.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+                    button.topAnchor.constraint(equalTo: wrapper.topAnchor),
+                    button.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+                    
+                    wrapper.heightAnchor.constraint(equalToConstant: 20)
+                ])
+                
+                return wrapper
+            }
+            
+            if !isActive {
+                let activateBtn = createActionButton(title: "Activate", type: "select", color: .systemBlue)
+                actionsStack.addArrangedSubview(activateBtn)
+            }
+            
+            let webBtn = createActionButton(title: "Web UI", type: "webui", color: .systemPurple)
+            let stopBtn = createActionButton(title: "Stop", type: "stop", color: .systemRed)
+            actionsStack.addArrangedSubview(webBtn)
+            actionsStack.addArrangedSubview(stopBtn)
+            
+            bottomRow.addView(actionsStack, in: .trailing)
+        }
         
         contentStack.addArrangedSubview(topRow)
         contentStack.addArrangedSubview(quotaStack)
@@ -1405,11 +1545,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             containerBox.bottomAnchor.constraint(equalTo: wrapperView.bottomAnchor, constant: -4)
         ])
         
-        if !isActive {
+        if !isActive, let actualDaemon = daemon {
             let overlayBtn = DaemonActionButton()
             overlayBtn.email = email
-            overlayBtn.port = daemon.httpPort
-            overlayBtn.pid = daemon.pid
+            overlayBtn.port = actualDaemon.httpPort
+            overlayBtn.pid = actualDaemon.pid
             overlayBtn.actionType = "select"
             overlayBtn.isBordered = false
             overlayBtn.isTransparent = true

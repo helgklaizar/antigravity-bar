@@ -13,7 +13,7 @@ struct DaemonInfo: Codable {
     let isHttps: Bool
 }
 
-struct ModelQuota {
+struct ModelQuota: Codable {
     let label: String
     let remainingPercentage: Double  // 0..100
     let isExhausted: Bool
@@ -21,7 +21,7 @@ struct ModelQuota {
     let secondsUntilReset: Double
 }
 
-struct QuotaData {
+struct QuotaData: Codable {
     let email: String?
     let name: String?
     let models: [ModelQuota]
