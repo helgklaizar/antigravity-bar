@@ -1,0 +1,27 @@
+{
+  "design": {
+    "mode": "audit",
+    "theme": "",
+    "enforce_design_md": false
+  },
+  "stack": {
+    "languages": [
+      "python",
+      "swift"
+    ],
+    "frameworks": []
+  },
+  "environment": {
+    "package_manager": "npm",
+    "gcloud_auth": false,
+    "gitleaks_scan": true
+  },
+  "testing": {
+    "frameworks": []
+  },
+  "verification": {
+    "level": [
+      "srs"
+    ]
+  }
+}

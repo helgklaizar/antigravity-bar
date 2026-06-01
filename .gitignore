@@ -23,3 +23,6 @@ status-bar/Stellar Bar.app
 .env
 .env.*
 
+
+.gemini/
+.codex/

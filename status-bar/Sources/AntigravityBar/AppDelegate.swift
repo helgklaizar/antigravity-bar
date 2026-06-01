@@ -750,17 +750,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             
             row.translatesAutoresizingMaskIntoConstraints = false
-            row.widthAnchor.constraint(equalToConstant: 240).isActive = true
             
             if i < (topApps.count + 1) / 2 {
                 col1.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: col1.widthAnchor).isActive = true
             } else {
                 col2.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: col2.widthAnchor).isActive = true
             }
         }
         
         gridStack.addArrangedSubview(col1)
         gridStack.addArrangedSubview(col2)
+        
+        gridStack.translatesAutoresizingMaskIntoConstraints = false
+        gridStack.widthAnchor.constraint(equalToConstant: 494).isActive = true
         
         mainStack.addArrangedSubview(gridStack)
         
@@ -1183,8 +1187,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     
     @objc private func killProcessClicked(_ sender: NSButton) {
         let pid = sender.tag
+        print("[AppDelegate] killProcessClicked called with sender tag/PID: \(pid)")
         if pid > 0 {
             ProcessManager.killProcess(pid: pid)
+            // Close menu manually to reflect process list changes on next open
+            statusItem.menu?.cancelTracking()
+        } else {
+            print("[AppDelegate] killProcessClicked called with invalid or zero PID")
         }
     }
 

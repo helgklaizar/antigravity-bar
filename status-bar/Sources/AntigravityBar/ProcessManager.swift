@@ -113,6 +113,14 @@ class ProcessManager {
     }
     
     static func killProcess(pid: Int) {
-        kill(pid_t(pid), SIGTERM)
+        print("[ProcessManager] Attempting to kill process \(pid)...")
+        let result = kill(pid_t(pid), SIGTERM)
+        if result != 0 {
+            let err = errno
+            let errStr = String(cString: strerror(err))
+            print("[ProcessManager] Failed to kill process \(pid): errno \(err) (\(errStr))")
+        } else {
+            print("[ProcessManager] Successfully sent SIGTERM to process \(pid)")
+        }
     }
 }
