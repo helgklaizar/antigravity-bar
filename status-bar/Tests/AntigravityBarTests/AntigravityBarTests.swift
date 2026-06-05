@@ -7,27 +7,27 @@ final class MockSystemEnvironment: @unchecked Sendable, SystemEnvironment {
     var mockedContents: [URL: [URL]] = [:]
     var mockedAttributes: [String: [FileAttributeKey: Any]] = [:]
     var removedURLs: [URL] = []
-    
+
     // Using simple array matching for enumeration
     var mockedEnumeratorValues: [URL: [URL]] = [:]
 
     func contentsOfDirectory(at url: URL, includingPropertiesForKeys keys: [URLResourceKey]?, options: FileManager.DirectoryEnumerationOptions) throws -> [URL] {
         return mockedContents[url] ?? []
     }
-    
-    func attributesOfItem(atPath path: String) throws -> [FileAttributeKey : Any] {
+
+    func attributesOfItem(atPath path: String) throws -> [FileAttributeKey: Any] {
         return mockedAttributes[path] ?? [:]
     }
-    
+
     func removeItem(at url: URL) throws {
         removedURLs.append(url)
     }
-    
+
     func enumerator(at url: URL, includingPropertiesForKeys keys: [URLResourceKey]?, options: FileManager.DirectoryEnumerationOptions) -> NSEnumerator? {
         let urls = mockedEnumeratorValues[url] ?? []
         return urls.isEmpty ? nil : (urls as NSArray).objectEnumerator()
     }
-    
+
     func readData(contentsOf url: URL) throws -> Data {
         return Data() // Ignored for these tests
     }
@@ -37,15 +37,15 @@ final class MockSystemEnvironment: @unchecked Sendable, SystemEnvironment {
 
 @MainActor
 final class AntigravityBarTests: XCTestCase {
-    
+
     var mockEnv: MockSystemEnvironment!
     var api: AntigravityAPI!
-    
+
     override func setUp() async throws {
         mockEnv = MockSystemEnvironment()
         api = AntigravityAPI(env: mockEnv)
     }
-    
+
     func testTimeFormatting() {
         XCTAssertEqual(api.formatTime(0), "Ready")
         XCTAssertEqual(api.formatTime(30000), "1m") // 0.5m rounds to 1
@@ -86,35 +86,35 @@ final class AntigravityBarTests: XCTestCase {
             XCTFail("Failed to setup mock JSON")
             return
         }
-        
+
         let quotaData = api.parseQuota(parsed)
         XCTAssertNotNil(quotaData)
         XCTAssertEqual(quotaData?.models.count, 2)
-        
+
         let gemma = quotaData?.models.first { $0.label == "Gemma 4" }
         XCTAssertEqual(gemma?.remainingPercentage, 75.0)
         XCTAssertFalse(gemma?.isExhausted ?? true)
-        
+
         let flash = quotaData?.models.first { $0.label == "Flash 2.5" }
         XCTAssertEqual(flash?.remainingPercentage, 0.0)
         XCTAssertTrue(flash?.isExhausted ?? false)
     }
-    
+
     func testClearBrainAndCodeTrackerDeletesCorrectFiles() {
         let brainDir = api.brainDir
-        
+
         let file1 = brainDir.appendingPathComponent("123.md")
         let fileDS = brainDir.appendingPathComponent(".DS_Store")
-        
+
         mockEnv.mockedContents[brainDir] = [file1, fileDS]
-        
+
         api.clearBrain()
-        
+
         // Should delete file1, but NOT .DS_Store
         XCTAssertEqual(mockEnv.removedURLs.count, 1)
         XCTAssertEqual(mockEnv.removedURLs.first, file1)
     }
-    
+
     func testModelGrouping() {
         let models = [
             ModelQuota(label: "Gemini 3.5 Flash (Medium) New", remainingPercentage: 80.0, isExhausted: false, timeUntilReset: "Ready", secondsUntilReset: 0),
@@ -124,31 +124,31 @@ final class AntigravityBarTests: XCTestCase {
             ModelQuota(label: "Gemini 3 Flash", remainingPercentage: 100.0, isExhausted: false, timeUntilReset: "Ready", secondsUntilReset: 0),
             ModelQuota(label: "Claude 3.5 Sonnet", remainingPercentage: 70.0, isExhausted: false, timeUntilReset: "Ready", secondsUntilReset: 0)
         ]
-        
+
         // 1. Test Menu Bar grouping (isMenuBar: true)
         let menuBarGroups = StatusBarUI.groupModels(models, isMenuBar: true)
         XCTAssertEqual(menuBarGroups.count, 2)
-        
+
         let geminiGroup = menuBarGroups.first { $0.name == "Gemini" }
         XCTAssertNotNil(geminiGroup)
         XCTAssertEqual(geminiGroup?.pct, 40)
-        
+
         let claudeGroup = menuBarGroups.first { $0.name == "Claude/OSS" }
         XCTAssertNotNil(claudeGroup)
         XCTAssertEqual(claudeGroup?.pct, 70)
-        
+
         // 2. Test Popover grouping (isMenuBar: false)
         let popoverGroups = StatusBarUI.groupModels(models, isMenuBar: false)
         XCTAssertEqual(popoverGroups.count, 3)
-        
+
         let g35 = popoverGroups.first { $0.name == "Gemini 3.5" }
         XCTAssertNotNil(g35)
         XCTAssertEqual(g35?.pct, 50)
-        
+
         let g31 = popoverGroups.first { $0.name == "Gemini 3.1 Pro" }
         XCTAssertNotNil(g31)
         XCTAssertEqual(g31?.pct, 40)
-        
+
         let claudeOSS = popoverGroups.first { $0.name == "Claude/OSS" }
         XCTAssertNotNil(claudeOSS)
         XCTAssertEqual(claudeOSS?.pct, 70)

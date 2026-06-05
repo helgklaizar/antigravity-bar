@@ -79,29 +79,29 @@ struct QuotaInfo: Decodable {
 @MainActor
 class AntigravityAPI: @unchecked Sendable {
     static let shared = AntigravityAPI()
-    
+
     let env: SystemEnvironment
-    
+
     @MainActor public var baseDir: URL {
         didSet {
             updateCacheSize()
         }
     }
-    
+
     private var cachedDaemon: DaemonInfo?
     private var cachedCacheSize: (String, Double) = ("0 B", 0.0)
     private var cacheTimer: Timer?
-    
+
     init(env: SystemEnvironment = DefaultSystemEnvironment()) {
         self.env = env
         let home = NSHomeDirectory()
         let ideDir = URL(fileURLWithPath: home).appendingPathComponent(".gemini/antigravity-ide")
         let baseDirName = FileManager.default.fileExists(atPath: ideDir.path) ? "antigravity-ide" : "antigravity"
         self.baseDir = URL(fileURLWithPath: home).appendingPathComponent(".gemini/\(baseDirName)")
-        
+
         startCacheSizeUpdater()
     }
-    
+
     private func startCacheSizeUpdater() {
         updateCacheSize()
         cacheTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
@@ -110,13 +110,13 @@ class AntigravityAPI: @unchecked Sendable {
             }
         }
     }
-    
+
     private func updateCacheSize() {
         let brain = self.brainDir
         let conversations = self.conversationsDir
         let htmlArts = self.htmlArtsDir
         let implicit = self.implicitDir
-        
+
         DispatchQueue.global(qos: .background).async { [weak self] in
             guard let self = self else { return }
             let total = self.dirSize(brain) + self.dirSize(conversations) + self.dirSize(htmlArts) + self.dirSize(implicit)
@@ -143,13 +143,13 @@ class AntigravityAPI: @unchecked Sendable {
         if let cached = cachedDaemon, isHTTPReachable(port: cached.httpPort, csrfToken: cached.csrfToken, isHttps: cached.isHttps) {
             return cached
         }
-        
+
         // Primary: find running language_server process and extract info
         if let info = findActiveDaemons().first {
             cachedDaemon = info
             return info
         }
-        
+
         cachedDaemon = nil
         return nil
     }
@@ -165,15 +165,15 @@ class AntigravityAPI: @unchecked Sendable {
         let task = Process()
         task.launchPath = "/usr/sbin/lsof"
         task.arguments = ["-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-n", "-P"]
-        
+
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
-        
+
         do {
             try task.run()
             task.waitUntilExit()
-            
+
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             if let output = String(data: data, encoding: .utf8) {
                 var ports: [Int] = []
@@ -238,11 +238,11 @@ class AntigravityAPI: @unchecked Sendable {
         var pids = [pid_t](repeating: 0, count: maxPids)
         let returnedBytes = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(maxPids * MemoryLayout<pid_t>.stride))
         let numPids = Int(returnedBytes) / MemoryLayout<pid_t>.stride
-        
+
         for i in 0..<numPids {
             let pid = pids[i]
             if pid <= 0 { continue }
-            
+
             var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
             let pathLen = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
             if pathLen > 0 {
@@ -263,7 +263,7 @@ class AntigravityAPI: @unchecked Sendable {
                             var offset = MemoryLayout<Int32>.size
                             while offset < buffer.count && buffer[offset] != 0 { offset += 1 }
                             while offset < buffer.count && buffer[offset] == 0 { offset += 1 }
-                            
+
                             var args = [String]()
                             for _ in 0..<argc {
                                 let argStart = offset
@@ -271,8 +271,8 @@ class AntigravityAPI: @unchecked Sendable {
                                 args.append(String(cString: Array(buffer[argStart...offset])))
                                 offset += 1
                             }
-                            
-                            var port: Int? = nil
+
+                            var port: Int?
                             if let tokenIdx = args.firstIndex(of: "--csrf_token"), tokenIdx + 1 < args.count {
                                 if let extIdx = args.firstIndex(of: "--extension_server_port"), extIdx + 1 < args.count {
                                     port = Int(args[extIdx + 1])
@@ -286,8 +286,6 @@ class AntigravityAPI: @unchecked Sendable {
         }
         return results
     }
-
-
 
     /// Lightweight HTTP check — send minimal request, expect any response
     private func isHTTPReachable(port: Int, csrfToken: String, isHttps: Bool = false) -> Bool {
@@ -304,8 +302,8 @@ class AntigravityAPI: @unchecked Sendable {
         let semaphore = DispatchSemaphore(value: 0)
         final class ReachableStatus: @unchecked Sendable { var ok = false }
         let status = ReachableStatus()
-        
-        sharedInsecureSession.dataTask(with: request) { data, response, _ in
+
+        sharedInsecureSession.dataTask(with: request) { _, response, _ in
             if let http = response as? HTTPURLResponse, http.statusCode == 200 {
                 status.ok = true
             }
@@ -327,7 +325,7 @@ class AntigravityAPI: @unchecked Sendable {
         let body = ["metadata": ["ideName": "antigravity", "extensionName": "antigravity", "locale": "en"]]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        sharedInsecureSession.dataTask(with: request) { data, response, error in
+        sharedInsecureSession.dataTask(with: request) { data, _, _ in
             guard let data = data,
                   let parsed = try? JSONDecoder().decode(CascadeUserStatus.self, from: data)
             else {

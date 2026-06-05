@@ -6,7 +6,7 @@ struct Node: Identifiable, Hashable {
     let name: String
     var isSelected: Bool = false
     let isFolder: Bool
-    var children: [Node]? = nil
+    var children: [Node]?
 }
 
 struct RegistrySection: Identifiable, Codable {
@@ -29,36 +29,36 @@ class InstallerViewModel: ObservableObject {
     @Published var nodes: [Node] = []
     @Published var isShowingSettings: Bool = false
     @Published var registrySections: [RegistrySection] = []
-    @Published var systemReport: SystemReport? = nil
-    
+    @Published var systemReport: SystemReport?
+
     private var registryURL: URL {
         return AntigravityAPI.shared.baseDir.appendingPathComponent("registry.json")
     }
-    
+
     init() {
         loadSources()
     }
-    
+
     func analyzeSystem() {
         step = .analyzing
-        
+
         DispatchQueue.global(qos: .userInitiated).async {
             let report = SystemAnalyzer.analyze()
-            
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 self.systemReport = report
-                
+
                 var rootNodes: [Node] = []
-                
+
                 // 1. Core Ecosystem (always offer)
                 rootNodes.append(Node(name: "core_antigravity", isFolder: true, children: [
                     Node(name: "antigravity-awesome-skills", isSelected: !report.hasAntigravity, isFolder: false),
                     Node(name: "claude-code-system-prompts", isSelected: true, isFolder: false)
                 ]))
-                
+
                 // 2. Conditional Projects
                 var skillsChildren: [Node] = []
-                
+
                 if report.foundProjects.contains("Node/React") {
                     skillsChildren.append(Node(name: "frontend", isFolder: true, children: [
                         Node(name: "react", isFolder: true, children: [
@@ -70,7 +70,7 @@ class InstallerViewModel: ObservableObject {
                         ])
                     ]))
                 }
-                
+
                 if report.foundProjects.contains("Rust/Tauri") {
                     skillsChildren.append(Node(name: "backend", isFolder: true, children: [
                         Node(name: "rust", isFolder: true, children: [
@@ -78,37 +78,37 @@ class InstallerViewModel: ObservableObject {
                         ])
                     ]))
                 }
-                
+
                 // 3. Apple MLX
                 skillsChildren.append(Node(name: "native", isFolder: true, children: [
                     Node(name: "apple", isFolder: true, children: [
                         Node(name: "apple-mlx.md", isSelected: false, isFolder: false)
                     ])
                 ]))
-                
+
                 if !skillsChildren.isEmpty {
                     rootNodes.append(Node(name: "skills", isFolder: true, children: skillsChildren))
                 }
-                
+
                 // 4. Global Workflows
                 rootNodes.append(Node(name: "global_workflows", isFolder: true, children: [
                     Node(name: "feature-pipeline.md", isSelected: true, isFolder: false),
                     Node(name: "qa-orchestrator.md", isSelected: true, isFolder: false)
                 ]))
-                
+
                 self.nodes = rootNodes
                 self.step = .results
             }
         }
     }
-    
+
     func installSelected() {
         step = .installing
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             self.step = .initial
         }
     }
-    
+
     // MARK: - Registry Persistence
     func loadSources() {
         do {
@@ -127,14 +127,14 @@ class InstallerViewModel: ObservableObject {
         } catch {
             print("Failed to load registry: \(error)")
         }
-        
+
         if self.registrySections.isEmpty {
             self.registrySections = [
                 RegistrySection(title: "🌌 Core Antigravity", isEnabled: true, repositories: ["https://github.com/sickn33/antigravity-awesome-skills"])
             ]
         }
     }
-    
+
     func saveSources() {
         do {
             let data = try JSONEncoder().encode(registrySections)
@@ -147,7 +147,7 @@ class InstallerViewModel: ObservableObject {
 
 struct InstallerView: View {
     @StateObject private var viewModel = InstallerViewModel()
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -166,7 +166,7 @@ struct InstallerView: View {
                 }
                 .padding(.vertical, 24)
                 .frame(maxWidth: .infinity)
-                
+
                 Button(action: {
                     viewModel.isShowingSettings = true
                 }) {
@@ -179,9 +179,9 @@ struct InstallerView: View {
                 .padding()
             }
             .background(Color(NSColor.controlBackgroundColor))
-            
+
             Divider()
-            
+
             // Dynamic Content
             VStack {
                 switch viewModel.step {
@@ -202,7 +202,7 @@ struct InstallerView: View {
                     .tint(.purple)
                     .controlSize(.large)
                     Spacer()
-                    
+
                 case .analyzing:
                     Spacer()
                     VStack(spacing: 16) {
@@ -215,7 +215,7 @@ struct InstallerView: View {
                             .foregroundColor(.secondary)
                     }
                     Spacer()
-                    
+
                 case .results:
                     VStack(alignment: .leading, spacing: 0) {
                         // Analysis Report
@@ -235,7 +235,7 @@ struct InstallerView: View {
                                             .foregroundColor(.primary)
                                     }
                                 }
-                                
+
                                 if !report.foundProjects.isEmpty {
                                     Text("Detected Stack: \(report.foundProjects.joined(separator: ", "))")
                                         .font(.caption)
@@ -247,7 +247,7 @@ struct InstallerView: View {
                         .padding()
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.secondary.opacity(0.1))
-                        
+
                         List {
                             ForEach($viewModel.nodes) { $node in
                                 NodeView(node: $node)
@@ -255,7 +255,7 @@ struct InstallerView: View {
                         }
                         .listStyle(.sidebar)
                     }
-                    
+
                 case .installing:
                     Spacer()
                     VStack(spacing: 16) {
@@ -271,7 +271,7 @@ struct InstallerView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            
+
             // Footer
             if viewModel.step == .results {
                 Divider()
@@ -301,7 +301,7 @@ struct InstallerView: View {
 
 struct NodeView: View {
     @Binding var node: Node
-    
+
     var body: some View {
         if node.isFolder {
             DisclosureGroup {
@@ -326,16 +326,16 @@ struct NodeView: View {
 struct SourcesSettingsView: View {
     @ObservedObject var viewModel: InstallerViewModel
     @State private var newSource: String = ""
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Registry Sources")
                 .font(.headline)
-            
+
             Text("Toggle groups to optimize your context window. Only enabled groups will be fetched.")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
-            
+
             List {
                 ForEach(viewModel.registrySections.indices, id: \.self) { index in
                     Section(header: HStack {
@@ -347,7 +347,7 @@ struct SourcesSettingsView: View {
                             }
                         ))
                         .labelsHidden()
-                        
+
                         Text(viewModel.registrySections[index].title)
                             .font(.headline)
                             .foregroundColor(viewModel.registrySections[index].isEnabled ? .primary : .secondary)
@@ -378,7 +378,7 @@ struct SourcesSettingsView: View {
             }
             .frame(minHeight: 250)
             .border(Color.secondary.opacity(0.2), width: 1)
-            
+
             HStack {
                 TextField("https://github.com/...", text: $newSource)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -390,7 +390,7 @@ struct SourcesSettingsView: View {
                     }
                 }
             }
-            
+
             HStack {
                 Spacer()
                 Button("Done") {
