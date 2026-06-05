@@ -31,29 +31,33 @@ final class SystemStats: @unchecked Sendable {
             let vm_deallocate_size = vm_size_t(numCpuInfo) * vm_size_t(MemoryLayout<integer_t>.stride)
             vm_deallocate(mach_task_self_, vm_address_t(bitPattern: cpuInfo), vm_deallocate_size)
 
-            lock.lock()
-            let userDiff = totalUser - previousCPU.user
-            let systemDiff = totalSystem - previousCPU.system
-            let idleDiff = totalIdle - previousCPU.idle
-            let niceDiff = totalNice - previousCPU.nice
-
-            previousCPU = (totalUser, totalSystem, totalIdle, totalNice)
-            lock.unlock()
+            // [M-3] Compute diffs and update previousCPU atomically under lock
+            var userDiff: Int32 = 0
+            var systemDiff: Int32 = 0
+            var idleDiff: Int32 = 0
+            var niceDiff: Int32 = 0
+            lock.withLock {
+                userDiff = totalUser - previousCPU.user
+                systemDiff = totalSystem - previousCPU.system
+                idleDiff = totalIdle - previousCPU.idle
+                niceDiff = totalNice - previousCPU.nice
+                previousCPU = (totalUser, totalSystem, totalIdle, totalNice)
+            }
 
             let totalDiff = userDiff + systemDiff + idleDiff + niceDiff
             if totalDiff > 0 {
                 let usage = Int(Double(userDiff + systemDiff + niceDiff) / Double(totalDiff) * 100.0)
-                lock.lock()
-                cpuHistory.append(usage)
-                if cpuHistory.count > 20 { cpuHistory.removeFirst() }
-                lock.unlock()
+                lock.withLock {
+                    cpuHistory.append(usage)
+                    if cpuHistory.count > 20 { cpuHistory.removeFirst() }
+                }
                 return usage
             }
         }
-        lock.lock()
-        cpuHistory.append(0)
-        if cpuHistory.count > 20 { cpuHistory.removeFirst() }
-        lock.unlock()
+        lock.withLock {
+            cpuHistory.append(0)
+            if cpuHistory.count > 20 { cpuHistory.removeFirst() }
+        }
         return 0
     }
 
@@ -71,16 +75,16 @@ final class SystemStats: @unchecked Sendable {
             let pageSize = UInt64(getpagesize())
             let usedMemory = UInt64(vmStat.active_count + vmStat.wire_count + vmStat.compressor_page_count) * pageSize
             let usage = Int(Double(usedMemory) / Double(physicalMemory) * 100.0)
-            lock.lock()
-            ramHistory.append(usage)
-            if ramHistory.count > 20 { ramHistory.removeFirst() }
-            lock.unlock()
+            lock.withLock {
+                ramHistory.append(usage)
+                if ramHistory.count > 20 { ramHistory.removeFirst() }
+            }
             return usage
         }
-        lock.lock()
-        ramHistory.append(0)
-        if ramHistory.count > 20 { ramHistory.removeFirst() }
-        lock.unlock()
+        lock.withLock {
+            ramHistory.append(0)
+            if ramHistory.count > 20 { ramHistory.removeFirst() }
+        }
         return 0
     }
 
@@ -108,10 +112,10 @@ final class SystemStats: @unchecked Sendable {
             }
             IOObjectRelease(iterator)
         }
-        lock.lock()
-        gpuHistory.append(usage)
-        if gpuHistory.count > 20 { gpuHistory.removeFirst() }
-        lock.unlock()
+        lock.withLock {
+            gpuHistory.append(usage)
+            if gpuHistory.count > 20 { gpuHistory.removeFirst() }
+        }
         return usage
     }
 }

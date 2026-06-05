@@ -51,6 +51,11 @@ struct UserStatusContainer: Decodable {
 
 class InsecureSessionDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        // [C-6] Only bypass TLS for localhost — prevent MITM on other hosts
+        guard challenge.protectionSpace.host == "127.0.0.1" else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
         if let trust = challenge.protectionSpace.serverTrust {
             completionHandler(.useCredential, URLCredential(trust: trust))
         } else {
@@ -105,7 +110,9 @@ class AntigravityAPI: @unchecked Sendable {
     private func startCacheSizeUpdater() {
         updateCacheSize()
         cacheTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            // [H-3] Use weak self inside Task to avoid retain cycle
+            guard let self else { return }
+            Task { @MainActor [weak self] in
                 self?.updateCacheSize()
             }
         }
@@ -247,8 +254,11 @@ class AntigravityAPI: @unchecked Sendable {
             let pathLen = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
             if pathLen > 0 {
                 let path = pathBuffer.withUnsafeBufferPointer { ptr in
-                    String(cString: ptr.baseAddress!)
+                    // [C-8] Guard against nil baseAddress for empty buffers
+                    guard let base = ptr.baseAddress else { return "" }
+                    return String(cString: base)
                 }
+                guard !path.isEmpty else { continue }
                 let lowercasedPath = path.lowercased()
                 if lowercasedPath.contains("language_server") {
                     var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
@@ -258,7 +268,9 @@ class AntigravityAPI: @unchecked Sendable {
                         var buffer = [CChar](repeating: 0, count: size)
                         if sysctl(&mib, UInt32(mib.count), &buffer, &size, nil, 0) == 0 {
                             let argc = buffer.withUnsafeBufferPointer { ptr -> Int32 in
-                                ptr.baseAddress!.withMemoryRebound(to: Int32.self, capacity: 1) { $0.pointee }
+                                // [C-8] Guard against nil baseAddress
+                                guard let base = ptr.baseAddress else { return 0 }
+                                return base.withMemoryRebound(to: Int32.self, capacity: 1) { $0.pointee }
                             }
                             var offset = MemoryLayout<Int32>.size
                             while offset < buffer.count && buffer[offset] != 0 { offset += 1 }
@@ -290,7 +302,10 @@ class AntigravityAPI: @unchecked Sendable {
     /// Lightweight HTTP check — send minimal request, expect any response
     private func isHTTPReachable(port: Int, csrfToken: String, isHttps: Bool = false) -> Bool {
         let scheme = isHttps ? "https" : "http"
-        let url = URL(string: "\(scheme)://127.0.0.1:\(port)/exa.language_server_pb.LanguageServerService/GetUserStatus")!
+        // [C-3] Guard against invalid URL instead of force-unwrap
+        guard let url = URL(string: "\(scheme)://127.0.0.1:\(port)/exa.language_server_pb.LanguageServerService/GetUserStatus") else {
+            return false
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("1", forHTTPHeaderField: "Connect-Protocol-Version")

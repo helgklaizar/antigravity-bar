@@ -21,9 +21,21 @@ def audit_project(path):
         issues.append("Не закоммиченные изменения (Git dirty)")
         
     # 2. Проверка невыгруженных коммитов
-    branch_out, code = run_cmd(["git", "status", "-sb"], cwd=path)
-    if code == 0 and "ahead" in branch_out:
-        issues.append("Есть невыгруженные коммиты (unpushed)")
+    setup_path = os.path.join(path, ".setup.json")
+    ignore_unpushed = False
+    if os.path.exists(setup_path):
+        try:
+            with open(setup_path, "r", encoding="utf-8") as f:
+                setup_data = json.load(f)
+                if setup_data.get("git", {}).get("ignore_unpushed", False):
+                    ignore_unpushed = True
+        except Exception:
+            pass
+
+    if not ignore_unpushed:
+        branch_out, code = run_cmd(["git", "status", "-sb"], cwd=path)
+        if code == 0 and "ahead" in branch_out:
+            issues.append("Есть невыгруженные коммиты (unpushed)")
         
     # 3. Проверка соответствия чек-листу экосистемы (GEMINI.md и wiki/)
     if not os.path.exists(os.path.join(path, "GEMINI.md")):

@@ -41,8 +41,11 @@ class ProcessManager {
             guard pathLen > 0 else { continue }
 
             let realPath = pathBuffer.withUnsafeBufferPointer { ptr in
-                String(cString: ptr.baseAddress!)
+                // [C-8] Guard against nil baseAddress for empty buffers
+                guard let base = ptr.baseAddress else { return "" }
+                return String(cString: base)
             }
+            guard !realPath.isEmpty else { continue }
             let name = (realPath as NSString).lastPathComponent
 
             var info = proc_taskinfo()

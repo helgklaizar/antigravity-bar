@@ -156,7 +156,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Start project audit and schedule hourly updates
         runProjectAudit()
         auditTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            // [H-1] Use weak self inside Task to avoid retain cycle
+            guard let self else { return }
+            Task { @MainActor [weak self] in
                 self?.runProjectAudit()
             }
         }
@@ -185,7 +187,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             interval = backgroundInterval
         }
         pollTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
-            Task { @MainActor in
+            // [H-2] Use weak self inside Task to avoid retain cycle
+            guard let self else { return }
+            Task { @MainActor [weak self] in
                 self?.fetchAndUpdate()
             }
         }
@@ -700,8 +704,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return rowStack
         }
 
-        let row1 = createRow(actions: Array(allActions[0..<3]), startIndex: 0)
-        let row2 = createRow(actions: Array(allActions[3..<6]), startIndex: 3)
+        // [L-2] Safe array slicing — use prefix/dropFirst to avoid index out of range
+        let row1 = createRow(actions: Array(allActions.prefix(3)), startIndex: 0)
+        let row2 = createRow(actions: Array(allActions.dropFirst(3).prefix(3)), startIndex: 3)
 
         mainStack.addArrangedSubview(row1)
         mainStack.addArrangedSubview(row2)
@@ -1307,7 +1312,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         statusItem.menu?.cancelTracking()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        // [M-2] Use weak self to avoid retain cycle in asyncAfter
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self else { return }
             switch segment {
             case 0: self.openGeminiFolder()
             case 1: self.launchNewChat()
